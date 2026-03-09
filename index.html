@@ -300,8 +300,6 @@ function setupCanvas(){
 
 async function doTranslate(){
   if(!origImg) return toast('이미지를 먼저 업로드하세요','ng');
-  const key=getKey();
-  if(!key) return toast('Gemini API 키를 입력하세요','ng');
   setLoading(true,'이미지 분석 & 번역 중...');setPill('분석 중','busy');
   try{
     const b64=await toB64(origImg,imgW,imgH);
