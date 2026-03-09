@@ -70,6 +70,11 @@ header .sub{font-size:10px;color:var(--muted);}
 .rbox.sel{border-color:var(--accent);cursor:move;}
 .rbox.msel{border-color:var(--orange);}
 .rbox.locked{pointer-events:none;opacity:.7;}
+/* 스마트 가이드 */
+.sg-line{position:absolute;pointer-events:none;z-index:20;}
+.sg-line.h{height:1px;background:rgba(255,50,200,.8);box-shadow:0 0 3px rgba(255,50,200,.5);}
+.sg-line.v{width:1px;background:rgba(255,50,200,.8);box-shadow:0 0 3px rgba(255,50,200,.5);}
+.sg-label{position:absolute;background:rgba(255,50,200,.85);color:#fff;font-size:8px;padding:1px 4px;border-radius:2px;pointer-events:none;z-index:21;white-space:nowrap;}
 .rlbl{position:absolute;top:-15px;left:0;background:var(--accent);color:#fff;font-size:8px;padding:1px 5px;border-radius:3px 3px 0 0;white-space:nowrap;pointer-events:none;display:none;}
 .rbox.sel .rlbl,.rbox.msel .rlbl,.rbox:hover .rlbl{display:block;}
 .rbox.msel .rlbl{background:var(--orange);}
@@ -204,7 +209,6 @@ input[type=file]{display:none;}
       <button class="btn pri" id="trBtn" onclick="doTranslate()" disabled>🌐 번역 시작</button>
       <button class="btn" id="reBtn" onclick="renderAll()" style="display:none">↺ 렌더</button>
       <button class="btn" id="erBtn" onclick="toggleErase()" style="display:none">🧹 지우개</button>
-      <button class="btn" id="eyBtn" onclick="toggleEyedrop()" style="display:none">💧 스포이드</button>
       <div class="sep"></div>
       <!-- 실행취소/다시실행 -->
       <button class="btn dim" id="undoBtn" onclick="doUndo()" title="되돌리기 (Ctrl+Z)">↩ 되돌리기</button>
@@ -290,13 +294,18 @@ input[type=file]{display:none;}
             </div>
           </div>
           <div class="fl"><label>채우기 방식</label>
-            <select class="fi" id="erFill">
+            <select class="fi" id="erFill" onchange="onErFillChange()">
               <option value="feather">페더 (자연스러운 블렌딩)</option>
               <option value="auto">자동 (주변색)</option>
               <option value="white">흰색</option>
               <option value="blur">블러</option>
               <option value="eyedrop">스포이드 색상</option>
             </select>
+          </div>
+          <!-- 스포이드 영역: 채우기=스포이드일 때만 표시 -->
+          <div id="erEyeRow" style="display:none;gap:7px;align-items:center">
+            <button class="btn" id="eyBtn" onclick="toggleEyedrop()" style="flex:1;justify-content:center">💧 스포이드 찍기</button>
+            <div id="eyColorPreview" style="width:28px;height:28px;border-radius:4px;border:1px solid var(--border);background:#ffffff;flex-shrink:0;cursor:pointer" title="현재 스포이드 색상" onclick="toggleEyedrop()"></div>
           </div>
           <button class="abtn" style="border-color:rgba(255,101,132,.4);color:var(--accent2)" onclick="toggleErase()">✕ 종료</button>
         </div>
@@ -665,10 +674,46 @@ function redrawMain(){
   }
 }
 
-// ── 배경 지우기: 완전 투명(제거)만 ──
-function inpaint(ctx,r){
-  // 텍스트 영역의 원본 픽셀을 clearRect로 완전 제거
-  ctx.clearRect(r.x, r.y, r.w, r.h);
+// ── 배경 지우기: 주변색 자동 채우기 (원본이미지에서 샘플링) ──
+function inpaint(ctx, r){
+  const rx=Math.max(0,r.x), ry=Math.max(0,r.y);
+  const rw=Math.min(imgW-rx, r.w), rh=Math.min(imgH-ry, r.h);
+  if(rw<=0||rh<=0) return;
+  // 원본 이미지에서 주변 픽셀 샘플링 (렌더 전 origImg에서)
+  const tmp=document.createElement('canvas');
+  tmp.width=imgW; tmp.height=imgH;
+  const tc=tmp.getContext('2d');
+  tc.drawImage(origImg,0,0);
+  const s=20, samples=[];
+  const bands=[
+    [rx, Math.max(0,ry-s), rw, Math.min(s,ry)],
+    [rx, Math.min(imgH,ry+rh), rw, Math.min(s,imgH-ry-rh)],
+    [Math.max(0,rx-s), ry, Math.min(s,rx), rh],
+    [Math.min(imgW,rx+rw), ry, Math.min(s,imgW-rx-rw), rh]
+  ];
+  bands.forEach(([ax,ay,aw,ah])=>{
+    if(aw>0&&ah>0){
+      const d=tc.getImageData(ax,ay,aw,ah);
+      for(let i=0;i<d.data.length;i+=4) samples.push([d.data[i],d.data[i+1],d.data[i+2]]);
+    }
+  });
+  if(!samples.length){ ctx.fillStyle='#ffffff'; ctx.fillRect(rx,ry,rw,rh); return; }
+  const avg=samples.reduce((a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],[0,0,0]).map(v=>Math.round(v/samples.length));
+  // 페더링: 중심은 평균색, 가장자리는 원본이미지와 블렌딩
+  const orig=tc.getImageData(rx,ry,rw,rh);
+  const out=new ImageData(new Uint8ClampedArray(orig.data),rw,rh);
+  const fr=Math.min(rw,rh)*0.3;
+  for(let y=0;y<rh;y++) for(let x=0;x<rw;x++){
+    const dx=Math.min(x,rw-1-x), dy=Math.min(y,rh-1-y);
+    const dist=Math.min(dx,dy);
+    const a=Math.min(1, dist>=fr ? 1 : dist/Math.max(fr,1));
+    const i=(y*rw+x)*4;
+    out.data[i  ]=Math.round(orig.data[i  ]*(1-a)+avg[0]*a);
+    out.data[i+1]=Math.round(orig.data[i+1]*(1-a)+avg[1]*a);
+    out.data[i+2]=Math.round(orig.data[i+2]*(1-a)+avg[2]*a);
+    out.data[i+3]=255;
+  }
+  ctx.putImageData(out,rx,ry);
 }
 
 function drawText(ctx,r){
@@ -781,8 +826,8 @@ function renderOverlay(){
       // 이미 선택된 박스 드래그 이동
       e.preventDefault();e.stopPropagation();
       const sx=e.clientX,sy=e.clientY,ox=r.x,oy=r.y;
-      const mv=me=>{r.x=Math.round(Math.max(0,ox+(me.clientX-sx)/scale));r.y=Math.round(Math.max(0,oy+(me.clientY-sy)/scale));box.style.left=r.x*scale+'px';box.style.top=r.y*scale+'px';syncPos(r);};
-      const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);snapshot();renderAll();};
+      const mv=me=>{r.x=Math.round(Math.max(0,ox+(me.clientX-sx)/scale));r.y=Math.round(Math.max(0,oy+(me.clientY-sy)/scale));snapSmartGuide(r);box.style.left=r.x*scale+'px';box.style.top=r.y*scale+'px';syncPos(r);showSmartGuides(r);};
+      const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);clearSmartGuides();snapshot();renderAll();};
       document.addEventListener('mousemove',mv);document.addEventListener('mouseup',up);
     };
     if(isSel){
@@ -859,7 +904,7 @@ function renderList(){
           <input class="fi" readonly value="${esc(r.original)}" style="opacity:.5;font-size:10px">
         </div>
         <div class="fl"><label>번역 텍스트</label>
-          <textarea class="fi" oninput="rUp(${r.id},'translated',this.value);renderAll()" style="white-space:pre-wrap">${esc(r.translated)}</textarea>
+          <textarea class="fi" id="rtxt${r.id}" oninput="rUp(${r.id},'translated',this.value);debouncedRender()" onkeydown="event.stopPropagation()" style="white-space:pre-wrap">${esc(r.translated)}</textarea>
         </div>
         <div class="hint">📦 클릭=선택 / 재클릭 드래그=이동 / 모서리=리사이즈 / Shift클릭=다중선택</div>
         <div class="row4">
@@ -970,10 +1015,19 @@ function eraseAt(e){
   redrawMain();
 }
 // ── 스포이드 ──
+function updateEyePreview(){
+  const el=document.getElementById('eyColorPreview');
+  if(el)el.style.background=eyedropColor;
+}
+function onErFillChange(){
+  const v=document.getElementById('erFill').value;
+  const row=document.getElementById('erEyeRow');
+  if(row)row.style.display=(v==='eyedrop')?'flex':'none';
+}
 function toggleEyedrop(){
   eyedropMode=!eyedropMode;
   const btn=document.getElementById('eyBtn');
-  btn.classList.toggle('act',eyedropMode);btn.textContent=eyedropMode?'💧 ON':'💧 스포이드';
+  if(btn){btn.classList.toggle('act',eyedropMode);btn.textContent=eyedropMode?'💧 찍는 중...':'💧 스포이드 찍기';}
   document.getElementById('mainCanvas').classList.toggle('ey-cur',eyedropMode);
   if(!eyedropMode)document.getElementById('eyePrev').style.display='none';
   renderOverlay();
@@ -989,7 +1043,12 @@ function setupEyeEv(cvs){
     const prev=document.getElementById('eyePrev');
     prev.style.display='block';prev.style.background=eyedropColor;prev.style.left=e.clientX+'px';prev.style.top=e.clientY+'px';
   });
-  cvs.addEventListener('click',e=>{if(!eyedropMode)return;toast(`색상: ${eyedropColor}`,'ok');toggleEyedrop();});
+  cvs.addEventListener('click',e=>{
+    if(!eyedropMode)return;
+    updateEyePreview();
+    toast(`스포이드 색상 저장됨`,'ok');
+    toggleEyedrop();
+  });
 }
 // ── 워터마크 ──
 function loadWm(e){
@@ -1036,6 +1095,101 @@ function setLoading(v,txt=''){document.getElementById('loading').classList.toggl
 function setPill(txt,cls){const p=document.getElementById('pill');p.textContent=txt;p.className='pill'+(cls?' '+cls:'');}
 function toast(msg,cls=''){const t=document.getElementById('toast');t.textContent=msg;t.className='toast'+(cls?' '+cls:'');void t.offsetWidth;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+// ── debounced render (textarea 수정 중 선택 유지) ──
+let _renderTimer=null;
+function debouncedRender(){
+  clearTimeout(_renderTimer);
+  _renderTimer=setTimeout(()=>renderAll(),400);
+}
+
+// ── 스마트 가이드 ──
+const SG_SNAP=8; // 스냅 거리 (px)
+function getSnapPoints(){
+  // 이미지 중심, 각 region의 중심/가장자리
+  const pts={cx:[imgW/2],cy:[imgH/2],lx:[0],rx:[imgW],ty:[0],by:[imgH]};
+  regions.forEach(r=>{
+    if(r.id===selId)return;
+    pts.lx.push(r.x); pts.rx.push(r.x+r.w);
+    pts.ty.push(r.y); pts.by.push(r.y+r.h);
+    pts.cx.push(r.x+r.w/2); pts.cy.push(r.y+r.h/2);
+  });
+  return pts;
+}
+function snapSmartGuide(r){
+  if(!imgW)return;
+  const pts=getSnapPoints();
+  const rc={l:r.x,r:r.x+r.w,t:r.y,b:r.y+r.h,cx:r.x+r.w/2,cy:r.y+r.h/2};
+  // X 스냅
+  let bestDx=SG_SNAP;
+  const xChecks=[
+    {src:rc.cx, targets:pts.cx, apply:d=>{r.x=Math.round(pts.cx.find(v=>Math.abs(v-rc.cx)<=bestDx)-r.w/2);}},
+    {src:rc.l,  targets:pts.lx, apply:d=>{r.x=Math.round(pts.lx.find(v=>Math.abs(v-rc.l)<=bestDx));}},
+    {src:rc.r,  targets:pts.rx, apply:d=>{r.x=Math.round(pts.rx.find(v=>Math.abs(v-rc.r)<=bestDx)-r.w);}},
+    {src:rc.l,  targets:pts.rx, apply:d=>{r.x=Math.round(pts.rx.find(v=>Math.abs(v-rc.l)<=bestDx));}},
+    {src:rc.r,  targets:pts.lx, apply:d=>{r.x=Math.round(pts.lx.find(v=>Math.abs(v-rc.r)<=bestDx)-r.w);}},
+  ];
+  for(const {src,targets,apply} of xChecks){
+    const t=targets.find(v=>Math.abs(v-src)<bestDx);
+    if(t!==undefined){bestDx=Math.abs(t-src);apply();}
+  }
+  // Y 스냅
+  let bestDy=SG_SNAP;
+  const yChecks=[
+    {src:rc.cy, targets:pts.cy},
+    {src:rc.t,  targets:pts.ty},
+    {src:rc.b,  targets:pts.by},
+    {src:rc.t,  targets:pts.by},
+    {src:rc.b,  targets:pts.ty},
+  ];
+  const yApply=[
+    v=>{r.y=Math.round(v-r.h/2);},
+    v=>{r.y=Math.round(v);},
+    v=>{r.y=Math.round(v-r.h);},
+    v=>{r.y=Math.round(v);},
+    v=>{r.y=Math.round(v-r.h);},
+  ];
+  for(let i=0;i<yChecks.length;i++){
+    const {src,targets}=yChecks[i];
+    const t=targets.find(v=>Math.abs(v-src)<bestDy);
+    if(t!==undefined){bestDy=Math.abs(t-src);yApply[i](t);}
+  }
+}
+function showSmartGuides(r){
+  clearSmartGuides();
+  const ov=document.getElementById('overlay');
+  const pts=getSnapPoints();
+  const rc={l:r.x,r:r.x+r.w,t:r.y,b:r.y+r.h,cx:r.x+r.w/2,cy:r.y+r.h/2};
+  const T=2; // tolerance px
+  // 수직선 (X 정렬)
+  const vx=[];
+  if(pts.cx.some(v=>Math.abs(v-rc.cx)<T)) vx.push({x:rc.cx,label:'center'});
+  if(pts.lx.some(v=>Math.abs(v-rc.l)<T))  vx.push({x:rc.l,label:''});
+  if(pts.rx.some(v=>Math.abs(v-rc.r)<T))  vx.push({x:rc.r,label:''});
+  if(pts.rx.some(v=>Math.abs(v-rc.l)<T))  vx.push({x:rc.l,label:''});
+  if(pts.lx.some(v=>Math.abs(v-rc.r)<T))  vx.push({x:rc.r,label:''});
+  vx.forEach(({x,label})=>{
+    const el=document.createElement('div');
+    el.className='sg-line v sg';
+    el.style.cssText=`left:${x*scale}px;top:0;height:100%`;
+    ov.appendChild(el);
+    if(label){const lb=document.createElement('div');lb.className='sg-label sg';lb.textContent=label;lb.style.cssText=`left:${x*scale+3}px;top:${rc.cy*scale-8}px`;ov.appendChild(lb);}
+  });
+  // 수평선 (Y 정렬)
+  const hy=[];
+  if(pts.cy.some(v=>Math.abs(v-rc.cy)<T)) hy.push({y:rc.cy,label:'middle'});
+  if(pts.ty.some(v=>Math.abs(v-rc.t)<T))  hy.push({y:rc.t,label:''});
+  if(pts.by.some(v=>Math.abs(v-rc.b)<T))  hy.push({y:rc.b,label:''});
+  hy.forEach(({y,label})=>{
+    const el=document.createElement('div');
+    el.className='sg-line h sg';
+    el.style.cssText=`top:${y*scale}px;left:0;width:100%`;
+    ov.appendChild(el);
+    if(label){const lb=document.createElement('div');lb.className='sg-label sg';lb.textContent=label;lb.style.cssText=`top:${y*scale+3}px;left:${rc.cx*scale-15}px`;ov.appendChild(lb);}
+  });
+}
+function clearSmartGuides(){
+  document.querySelectorAll('.sg').forEach(el=>el.remove());
+}
 </script>
 </body>
 </html>
