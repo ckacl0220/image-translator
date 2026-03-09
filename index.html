@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>이미지 번역기</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=Black+Han+Sans&family=Gowun+Dodum&family=Jua&family=Do+Hyeon&family=Gamja+Flower&display=swap');
+
+:root {
+  --bg: #0e0e10;
+  --s1: #17171a;
+  --s2: #202025;
+  --s3: #2a2a32;
+  --border: #32323e;
+  --accent: #6c63ff;
+  --accent2: #ff6584;
+  --text: #ececf4;
+  --muted: #7a7a90;
+  --green: #4ade80;
+  --yellow: #fbbf24;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Noto Sans KR', sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+header {
+  height: 52px; flex-shrink: 0;
+  background: var(--s1); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 20px; gap: 12px;
+}
+.logo { width: 32px; height: 32px; border-radius: 8px; background: linear-gradient(135deg,var(--accent),var(--accent2)); display:flex;align-items:center;justify-content:center;font-size:16px; }
+header h1 { font-size: 16px; font-weight: 600; }
+header .sub { font-size: 12px; color: var(--muted); }
+.api-row { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.api-row label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.api-input { width: 220px; background: var(--s2); border: 1px solid var(--border); border-radius: 7px; padding: 6px 10px; color: var(--text); font-family: monospace; font-size: 11px; outline: none; }
+.api-input:focus { border-color: var(--accent); }
+.api-save { padding: 6px 12px; background: var(--s2); border: 1px solid var(--border); border-radius: 7px; color: var(--muted); font-size: 12px; cursor: pointer; font-family: inherit; transition: all .15s; }
+.api-save:hover { border-color: var(--green); color: var(--green); }
+
+.layout { flex: 1; display: flex; overflow: hidden; }
+
+.canvas-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+.toolbar { height: 48px; flex-shrink: 0; background: var(--s1); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 14px; gap: 8px; }
+.btn { display:flex;align-items:center;gap:5px;padding:7px 14px;border-radius:7px;border:1px solid var(--border);background:var(--s2);color:var(--text);font-size:12px;font-family:inherit;cursor:pointer;transition:all .15s;white-space:nowrap; }
+.btn:hover { border-color:var(--accent);color:var(--accent); }
+.btn.primary { background:linear-gradient(135deg,var(--accent),#9b8aff);border-color:transparent;color:#fff;font-weight:600; }
+.btn.primary:hover { opacity:.88; }
+.btn.primary:disabled { opacity:.35;cursor:not-allowed; }
+.btn svg { width:13px;height:13px;flex-shrink:0; }
+.sep { width:1px;height:22px;background:var(--border); }
+.pill { margin-left:auto;font-size:11px;font-family:monospace;color:var(--muted);background:var(--s2);padding:4px 10px;border-radius:20px;border:1px solid var(--border); }
+.pill.ok { color:var(--green);border-color:#4ade8033; }
+.pill.busy { color:var(--yellow);border-color:#fbbf2433; }
+.pill.err { color:var(--accent2);border-color:#ff658433; }
+
+.canvas-scroll { flex:1;overflow:auto;display:flex;align-items:flex-start;justify-content:center;padding:24px;background:var(--bg); }
+
+#drop-zone { width:100%;max-width:700px;min-height:380px;border:2px dashed var(--border);border-radius:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;cursor:pointer;transition:all .2s;color:var(--muted); }
+#drop-zone:hover,#drop-zone.over { border-color:var(--accent);background:rgba(108,99,255,.05);color:var(--accent); }
+#drop-zone .dz-icon { font-size:44px; }
+#drop-zone p { font-size:14px; }
+#drop-zone small { font-size:11px;opacity:.6; }
+
+#canvas-wrap { display:none;position:relative;flex-shrink:0; }
+#mainCanvas { display:block;border-radius:8px;box-shadow:0 8px 40px #00000099; }
+.overlay { position:absolute;top:0;left:0;pointer-events:none; }
+.rbox { position:absolute;border:2px solid transparent;border-radius:2px;cursor:move;pointer-events:all;transition:border-color .15s; }
+.rbox:hover { border-color:#6c63ff88; }
+.rbox.sel { border-color:var(--accent); }
+.rbox .rlabel { position:absolute;top:-18px;left:-1px;background:var(--accent);color:#fff;font-size:9px;padding:2px 6px;border-radius:3px 3px 0 0;white-space:nowrap;font-family:monospace;pointer-events:none; }
+
+.sidebar { width:340px;flex-shrink:0;background:var(--s1);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden; }
+.tabs { display:flex;border-bottom:1px solid var(--border);flex-shrink:0; }
+.tab { flex:1;padding:12px 6px;font-size:12px;font-family:inherit;background:none;border:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s; }
+.tab.on { color:var(--accent);border-bottom-color:var(--accent); }
+.panel { flex:1;overflow-y:auto;padding:16px; }
+.panel::-webkit-scrollbar { width:3px; }
+.panel::-webkit-scrollbar-thumb { background:var(--border);border-radius:2px; }
+
+.rcard { background:var(--s2);border:1px solid var(--border);border-radius:10px;margin-bottom:10px;overflow:hidden;cursor:pointer;transition:border-color .15s; }
+.rcard.sel { border-color:var(--accent); }
+.rcard-head { padding:10px 12px;display:flex;align-items:center;gap:8px; }
+.rnum { width:20px;height:20px;background:rgba(108,99,255,.18);color:var(--accent);border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:10px;font-family:monospace;font-weight:700;flex-shrink:0; }
+.rprev { font-size:11px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.rcard-body { padding:0 12px 12px;display:flex;flex-direction:column;gap:9px; }
+.fl { display:flex;flex-direction:column;gap:3px; }
+.fl label { font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px; }
+.fi { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:7px 9px;color:var(--text);font-family:inherit;font-size:12px;outline:none;width:100%; }
+.fi:focus { border-color:var(--accent); }
+textarea.fi { min-height:56px;resize:vertical;font-size:12px; }
+select.fi { cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%237a7a90'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 8px center;padding-right:24px; }
+.row2 { display:flex;gap:8px; }
+.row2 .fl { flex:1; }
+input[type=color] { width:34px;height:34px;padding:2px;border-radius:6px;border:1px solid var(--border);background:var(--bg);cursor:pointer; }
+input[type=number].fi { -moz-appearance:textfield; }
+input[type=range] { width:100%;accent-color:var(--accent); }
+.drag-hint { font-size:10px;color:var(--muted);text-align:center;padding:2px 0; }
+.apply-btn { width:100%;padding:9px;background:rgba(108,99,255,.12);border:1px solid rgba(108,99,255,.3);border-radius:7px;color:var(--accent);font-size:12px;font-family:inherit;font-weight:600;cursor:pointer;transition:all .15s;margin-top:2px; }
+.apply-btn:hover { background:rgba(108,99,255,.22); }
+
+.gset { display:flex;flex-direction:column;gap:14px; }
+.gcard { background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px; }
+.gcard h4 { font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px; }
+.font-prev { background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px;text-align:center;font-size:17px;color:var(--text);min-height:40px;display:flex;align-items:center;justify-content:center; }
+
+.sidebar-foot { padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0; }
+
+#loading { display:none;position:fixed;inset:0;background:#00000099;backdrop-filter:blur(4px);z-index:99;flex-direction:column;align-items:center;justify-content:center;gap:14px; }
+#loading.show { display:flex; }
+.spin { width:44px;height:44px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+#ltxt { font-size:14px;color:var(--text); }
+
+.toast { position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(70px);background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:10px 18px;font-size:12px;z-index:200;transition:transform .25s;white-space:nowrap; }
+.toast.show { transform:translateX(-50%) translateY(0); }
+.toast.ok { border-color:#4ade8044;color:var(--green); }
+.toast.ng { border-color:#ff658444;color:var(--accent2); }
+
+.empty { text-align:center;padding:40px 0;color:var(--muted);font-size:12px; }
+.empty .ei { font-size:30px;margin-bottom:10px; }
+input[type=file] { display:none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">🌐</div>
+  <h1>이미지 번역기</h1>
+  <span class="sub">중국어 → 한국어</span>
+</header>
+
+<div class="layout">
+  <div class="canvas-col">
+    <div class="toolbar">
+      <button class="btn primary" onclick="document.getElementById('fi').click()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+        이미지 업로드
+      </button>
+      <input type="file" id="fi" accept="image/*" onchange="loadImg(event)">
+      <div class="sep"></div>
+      <button class="btn primary" id="trBtn" onclick="doTranslate()" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+        번역 시작
+      </button>
+      <button class="btn" id="reBtn" onclick="renderAll()" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        다시 렌더
+      </button>
+      <button class="btn" id="dlBtn" onclick="doExport()" style="display:none">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        PNG 내보내기 (원본 크기)
+      </button>
+      <div class="pill" id="pill">대기 중</div>
+    </div>
+
+    <div class="canvas-scroll" id="cscroll">
+      <div id="drop-zone"
+        ondrop="onDrop(event)" ondragover="onDragOver(event)" ondragleave="onDragLeave(event)"
+        onclick="document.getElementById('fi').click()">
+        <div class="dz-icon">🖼️</div>
+        <p>이미지를 드래그하거나 클릭해서 업로드</p>
+        <small>PNG · JPG · WEBP 지원</small>
+      </div>
+      <div id="canvas-wrap">
+        <canvas id="mainCanvas"></canvas>
+        <div id="overlay" class="overlay"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="tabs">
+      <button class="tab on" onclick="switchTab('regions',this)">텍스트 영역</button>
+      <button class="tab" onclick="switchTab('settings',this)">기본 설정</button>
+    </div>
+
+    <div class="panel" id="tab-regions">
+      <div id="rlist">
+        <div class="empty"><div class="ei">📋</div><p>이미지를 업로드하고<br>번역 시작을 눌러주세요</p></div>
+      </div>
+    </div>
+
+    <div class="panel" id="tab-settings" style="display:none">
+      <div class="gset">
+        <div class="gcard">
+          <h4>기본 폰트</h4>
+          <div class="fl">
+            <label>폰트 선택</label>
+            <select class="fi" id="gFont" onchange="updateFontPrev()">
+              <option value="'Noto Sans KR',sans-serif">Noto Sans KR</option>
+              <option value="'Black Han Sans',sans-serif">Black Han Sans (굵은 고딕)</option>
+              <option value="'Gowun Dodum',sans-serif">Gowun Dodum (부드러운)</option>
+              <option value="'Jua',sans-serif">Jua (귀여운)</option>
+              <option value="'Do Hyeon',sans-serif">Do Hyeon (둥근 고딕)</option>
+              <option value="'Gamja Flower',cursive">Gamja Flower (손글씨)</option>
+            </select>
+          </div>
+          <div class="font-prev" id="fontPrev">미리보기 · 가나다라</div>
+        </div>
+        <div class="gcard">
+          <h4>기본 스타일</h4>
+          <div class="fl">
+            <label>폰트 크기</label>
+            <div style="display:flex;gap:8px;align-items:center">
+              <input type="range" min="8" max="80" value="18" id="gSize" oninput="document.getElementById('gSizeN').value=this.value">
+              <input type="number" class="fi" id="gSizeN" value="18" style="width:56px" oninput="document.getElementById('gSize').value=this.value">
+            </div>
+          </div>
+          <div class="row2">
+            <div class="fl">
+              <label>텍스트 색상</label>
+              <input type="color" id="gColor" value="#111111">
+            </div>
+            <div class="fl" style="flex:1">
+              <label>굵기</label>
+              <select class="fi" id="gBold">
+                <option value="normal">보통</option>
+                <option value="bold">굵게</option>
+              </select>
+            </div>
+            <div class="fl" style="flex:1">
+              <label>정렬</label>
+              <select class="fi" id="gAlign">
+                <option value="center">가운데</option>
+                <option value="left">왼쪽</option>
+                <option value="right">오른쪽</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="gcard">
+          <h4>배경 처리 방식</h4>
+          <select class="fi" id="gBg">
+            <option value="auto">자동 (주변색 채우기)</option>
+            <option value="white">흰색으로 채우기</option>
+            <option value="blur">블러 처리</option>
+          </select>
+        </div>
+        <button class="btn primary" style="width:100%" onclick="applyGlobal()">전체에 적용 후 렌더링</button>
+      </div>
+    </div>
+
+    <div class="sidebar-foot">
+      <button class="btn primary" id="dlBtn2" onclick="doExport()" style="display:none;width:100%">
+        📤 PNG 내보내기 (원본 크기)
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="loading"><div class="spin"></div><div id="ltxt">처리 중...</div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+let origImg=null, imgW=0, imgH=0;
+let regions=[], selId=null, scale=1, resultCanvas=null;
+
+window.onload=()=>{
+  const k=localStorage.getItem('anthropic_key');
+  if(k) document.getElementById('apiKey').value=k;
+  updateFontPrev();
+};
+
+function saveKey(){ const k=document.getElementById('apiKey').value.trim(); if(k){localStorage.setItem('anthropic_key',k);toast('API 키 저장됨','ok');} }
+function getKey(){ return document.getElementById('apiKey').value.trim(); }
+
+function onDrop(e){ e.preventDefault();dz().classList.remove('over');const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))readFile(f); }
+function onDragOver(e){ e.preventDefault();dz().classList.add('over'); }
+function onDragLeave(){ dz().classList.remove('over'); }
+function loadImg(e){ if(e.target.files[0])readFile(e.target.files[0]); }
+function dz(){ return document.getElementById('drop-zone'); }
+
+function readFile(file){
+  const r=new FileReader();
+  r.onload=e=>{
+    const img=new Image();
+    img.onload=()=>{
+      origImg=img;imgW=img.width;imgH=img.height;
+      regions=[];selId=null;resultCanvas=null;
+      dz().style.display='none';
+      document.getElementById('canvas-wrap').style.display='block';
+      document.getElementById('trBtn').disabled=false;
+      ['reBtn','dlBtn','dlBtn2'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display='none'; });
+      setupCanvas();setPill('이미지 로드됨','');toast('업로드 완료!','ok');renderList();
+    };
+    img.src=e.target.result;
+  };
+  r.readAsDataURL(file);
+}
+
+function setupCanvas(){
+  const sc=document.getElementById('cscroll');
+  scale=Math.min((sc.clientWidth-48)/imgW,(sc.clientHeight-48)/imgH,1);
+  const cvs=document.getElementById('mainCanvas');
+  cvs.width=Math.round(imgW*scale);cvs.height=Math.round(imgH*scale);
+  document.getElementById('overlay').style.cssText=`width:${cvs.width}px;height:${cvs.height}px`;
+  cvs.getContext('2d').drawImage(origImg,0,0,cvs.width,cvs.height);
+}
+
+async function doTranslate(){
+  if(!origImg) return toast('이미지를 먼저 업로드하세요','ng');
+  const key=getKey();
+  if(!key) return toast('Gemini API 키를 입력하세요','ng');
+  setLoading(true,'이미지 분석 & 번역 중...');setPill('분석 중','busy');
+  try{
+    const b64=await toB64(origImg,imgW,imgH);
+    const raw=await callGemini(key,b64);
+    regions=parseRegions(raw);
+    setLoading(true,'렌더링 중...');
+    await renderAll();
+    ['reBtn','dlBtn','dlBtn2'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display=''; });
+    setPill(`${regions.length}개 영역 완료`,'ok');
+    toast(`${regions.length}개 번역 완료!`,'ok');
+  }catch(err){
+    console.error(err);toast('오류: '+err.message,'ng');setPill('오류','err');
+  }finally{ setLoading(false); }
+}
+
+async function callGemini(key,b64){
+  const res=await fetch('/.netlify/functions/translate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({imageBase64:b64,imageWidth:imgW,imageHeight:imgH})
+  });
+  const raw=await res.text();
+  if(!res.ok){ 
+    let msg=`HTTP ${res.status}`;
+    try{msg=JSON.parse(raw).error||msg;}catch(e){msg=raw.substring(0,200)||msg;}
+    throw new Error(msg);
+  }
+  let data;
+  try{data=JSON.parse(raw);}catch(e){throw new Error('응답 파싱 오류: '+raw.substring(0,200));}
+  return data.text||'';
+}
+
+function parseRegions(text){
+  const m=text.match(/\[[\s\S]*\]/);
+  if(!m) throw new Error('번역 결과 파싱 실패. 다시 시도해주세요.');
+  const arr=JSON.parse(m[0]);
+  const gSize=parseInt(document.getElementById('gSizeN').value);
+  const gColor=document.getElementById('gColor').value;
+  const gBold=document.getElementById('gBold').value==='bold';
+  const gAlign=document.getElementById('gAlign').value;
+  const gFont=document.getElementById('gFont').value;
+  return arr.map((r,i)=>({
+    id:i, x:r.x||0, y:r.y||0, w:r.w||100, h:r.h||30,
+    original:r.original||'', translated:r.translated||'',
+    fontSize:r.fontSize||gSize, color:r.color||gColor,
+    bold:r.bold??(gBold), align:r.align||gAlign, font:gFont
+  }));
+}
+
+async function renderAll(){
+  if(!origImg||!regions.length) return;
+  const off=document.createElement('canvas');
+  off.width=imgW;off.height=imgH;
+  const ctx=off.getContext('2d');
+  ctx.drawImage(origImg,0,0);
+  const bgMethod=document.getElementById('gBg').value;
+  for(const r of regions){ inpaint(ctx,r,bgMethod);drawText(ctx,r); }
+  resultCanvas=off;
+  const cvs=document.getElementById('mainCanvas');
+  const dctx=cvs.getContext('2d');
+  dctx.clearRect(0,0,cvs.width,cvs.height);
+  dctx.drawImage(off,0,0,cvs.width,cvs.height);
+  renderList();renderOverlay();
+}
+
+function inpaint(ctx,r,method){
+  const pad=2,rx=Math.max(0,r.x-pad),ry=Math.max(0,r.y-pad);
+  const rw=Math.min(imgW-rx,r.w+pad*2),rh=Math.min(imgH-ry,r.h+pad*2);
+  if(method==='white'){ctx.fillStyle='#fff';ctx.fillRect(rx,ry,rw,rh);return;}
+  if(method==='blur'){const id=ctx.getImageData(rx,ry,rw,rh);ctx.putImageData(boxBlur(id,10),rx,ry);return;}
+  const s=8,samples=[];
+  if(ry>s){const d=ctx.getImageData(rx,ry-s,rw,s);for(let i=0;i<d.data.length;i+=4)samples.push([d.data[i],d.data[i+1],d.data[i+2]]);}
+  if(ry+rh+s<imgH){const d=ctx.getImageData(rx,ry+rh,rw,s);for(let i=0;i<d.data.length;i+=4)samples.push([d.data[i],d.data[i+1],d.data[i+2]]);}
+  if(!samples.length){ctx.fillStyle='#fff';ctx.fillRect(rx,ry,rw,rh);return;}
+  const avg=samples.reduce((a,b)=>[a[0]+b[0],a[1]+b[1],a[2]+b[2]],[0,0,0]).map(v=>Math.round(v/samples.length));
+  ctx.fillStyle=`rgb(${avg.join(',')})`;ctx.fillRect(rx,ry,rw,rh);
+}
+
+function drawText(ctx,r){
+  if(!r.translated)return;
+  const ff=r.font||"'Noto Sans KR',sans-serif", w=r.bold?'bold':'normal';
+  let fs=r.fontSize;
+  ctx.font=`${w} ${fs}px ${ff}`;
+  let lines=wrapText(ctx,r.translated,r.w-8);
+  while(fs>7&&lines.length*fs*1.3>r.h-4){fs--;ctx.font=`${w} ${fs}px ${ff}`;lines=wrapText(ctx,r.translated,r.w-8);}
+  const lh=fs*1.3,totalH=lines.length*lh,startY=r.y+(r.h-totalH)/2;
+  ctx.fillStyle=r.color;ctx.textBaseline='top';ctx.textAlign=r.align||'center';
+  const tx=r.align==='left'?r.x+4:r.align==='right'?r.x+r.w-4:r.x+r.w/2;
+  lines.forEach((line,i)=>ctx.fillText(line,tx,startY+i*lh));
+}
+
+function wrapText(ctx,text,maxW){
+  const lines=[];let cur='';
+  for(const ch of text){const t=cur+ch;if(ctx.measureText(t).width>maxW&&cur){lines.push(cur);cur=ch;}else cur=t;}
+  if(cur)lines.push(cur);return lines;
+}
+
+function boxBlur(id,r){
+  const d=new ImageData(new Uint8ClampedArray(id.data),id.width,id.height);
+  for(let y=0;y<id.height;y++)for(let x=0;x<id.width;x++){
+    let R=0,G=0,B=0,c=0;
+    for(let dy=-r;dy<=r;dy++)for(let dx=-r;dx<=r;dx++){
+      const nx=Math.min(Math.max(x+dx,0),id.width-1),ny=Math.min(Math.max(y+dy,0),id.height-1);
+      const i=(ny*id.width+nx)*4;R+=id.data[i];G+=id.data[i+1];B+=id.data[i+2];c++;
+    }
+    const i=(y*id.width+x)*4;d.data[i]=R/c;d.data[i+1]=G/c;d.data[i+2]=B/c;d.data[i+3]=255;
+  }
+  return d;
+}
+
+function renderOverlay(){
+  const ov=document.getElementById('overlay');ov.innerHTML='';
+  regions.forEach(r=>{
+    const box=document.createElement('div');
+    box.className='rbox'+(selId===r.id?' sel':'');
+    box.style.cssText=`left:${r.x*scale}px;top:${r.y*scale}px;width:${r.w*scale}px;height:${r.h*scale}px`;
+    const lbl=document.createElement('div');lbl.className='rlabel';lbl.textContent=`#${r.id+1}`;
+    box.appendChild(lbl);
+    box.onclick=e=>{e.stopPropagation();selId=r.id;renderList();renderOverlay();scrollToCard(r.id);};
+    // 드래그로 위치 이동
+    box.onmousedown=e=>{
+      e.preventDefault();e.stopPropagation();
+      const sx=e.clientX,sy=e.clientY,ox=r.x,oy=r.y;
+      const onMove=me=>{
+        r.x=Math.round(Math.max(0,ox+(me.clientX-sx)/scale));
+        r.y=Math.round(Math.max(0,oy+(me.clientY-sy)/scale));
+        box.style.left=r.x*scale+'px';box.style.top=r.y*scale+'px';
+        updateCardPos(r);
+      };
+      const onUp=()=>{document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);renderAll();};
+      document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
+    };
+    ov.appendChild(box);
+  });
+}
+
+function updateCardPos(r){
+  const ex=document.getElementById(`rx-${r.id}`),ey=document.getElementById(`ry-${r.id}`);
+  if(ex)ex.value=r.x;if(ey)ey.value=r.y;
+}
+
+function renderList(){
+  const list=document.getElementById('rlist');
+  if(!regions.length){list.innerHTML='<div class="empty"><div class="ei">📋</div><p>이미지를 업로드하고<br>번역 시작을 눌러주세요</p></div>';return;}
+  list.innerHTML=regions.map(r=>`
+    <div class="rcard ${selId===r.id?'sel':''}" id="rcard-${r.id}" onclick="selRegion(${r.id})">
+      <div class="rcard-head"><div class="rnum">${r.id+1}</div><div class="rprev">${esc(r.translated||r.original||'')}</div></div>
+      <div class="rcard-body">
+        <div class="fl"><label>원본 (중국어)</label><input class="fi" readonly value="${esc(r.original)}" style="opacity:.5;font-size:11px"></div>
+        <div class="fl"><label>번역 텍스트 (직접 수정 가능)</label><textarea class="fi" oninput="upd(${r.id},'translated',this.value)">${esc(r.translated)}</textarea></div>
+        <div class="drag-hint">📦 이미지 위 박스를 드래그하면 위치 이동</div>
+        <div class="row2">
+          <div class="fl"><label>X 위치</label><input type="number" class="fi" id="rx-${r.id}" value="${r.x}" oninput="updN(${r.id},'x',this.value)"></div>
+          <div class="fl"><label>Y 위치</label><input type="number" class="fi" id="ry-${r.id}" value="${r.y}" oninput="updN(${r.id},'y',this.value)"></div>
+        </div>
+        <div class="row2">
+          <div class="fl"><label>너비</label><input type="number" class="fi" id="rw-${r.id}" value="${r.w}" oninput="updN(${r.id},'w',this.value)"></div>
+          <div class="fl"><label>높이</label><input type="number" class="fi" id="rh-${r.id}" value="${r.h}" oninput="updN(${r.id},'h',this.value)"></div>
+        </div>
+        <div class="row2">
+          <div class="fl"><label>폰트 크기</label><input type="number" class="fi" value="${r.fontSize}" oninput="updN(${r.id},'fontSize',this.value)"></div>
+          <div class="fl" style="align-items:flex-start"><label>색상</label><input type="color" value="${r.color}" onchange="upd(${r.id},'color',this.value)"></div>
+          <div class="fl" style="flex:1"><label>굵기</label>
+            <select class="fi" onchange="upd(${r.id},'bold',this.value==='bold')">
+              <option value="normal" ${!r.bold?'selected':''}>보통</option>
+              <option value="bold" ${r.bold?'selected':''}>굵게</option>
+            </select>
+          </div>
+        </div>
+        <div class="fl"><label>폰트</label>
+          <select class="fi" onchange="upd(${r.id},'font',this.value)">
+            <option value="'Noto Sans KR',sans-serif" ${r.font?.includes('Noto')?'selected':''}>Noto Sans KR</option>
+            <option value="'Black Han Sans',sans-serif" ${r.font?.includes('Black')?'selected':''}>Black Han Sans (굵은 고딕)</option>
+            <option value="'Gowun Dodum',sans-serif" ${r.font?.includes('Gowun')?'selected':''}>Gowun Dodum</option>
+            <option value="'Jua',sans-serif" ${r.font?.includes('Jua')?'selected':''}>Jua (귀여운)</option>
+            <option value="'Do Hyeon',sans-serif" ${r.font?.includes('Do Hyeon')?'selected':''}>Do Hyeon</option>
+            <option value="'Gamja Flower',cursive" ${r.font?.includes('Gamja')?'selected':''}>Gamja Flower (손글씨)</option>
+          </select>
+        </div>
+        <div class="fl"><label>정렬</label>
+          <select class="fi" onchange="upd(${r.id},'align',this.value)">
+            <option value="center" ${r.align==='center'?'selected':''}>가운데</option>
+            <option value="left" ${r.align==='left'?'selected':''}>왼쪽</option>
+            <option value="right" ${r.align==='right'?'selected':''}>오른쪽</option>
+          </select>
+        </div>
+        <button class="apply-btn" onclick="event.stopPropagation();applyOne(${r.id})">✓ 이 영역 적용</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function selRegion(id){selId=id;renderList();renderOverlay();}
+function scrollToCard(id){const el=document.getElementById(`rcard-${id}`);if(el)el.scrollIntoView({behavior:'smooth',block:'nearest'});}
+function upd(id,key,val){const r=regions.find(r=>r.id===id);if(r)r[key]=val;}
+function updN(id,key,val){const r=regions.find(r=>r.id===id);if(r)r[key]=Number(val);}
+async function applyOne(id){await renderAll();toast('적용 완료!','ok');}
+
+function applyGlobal(){
+  const font=document.getElementById('gFont').value;
+  const size=parseInt(document.getElementById('gSizeN').value);
+  const color=document.getElementById('gColor').value;
+  const bold=document.getElementById('gBold').value==='bold';
+  const align=document.getElementById('gAlign').value;
+  regions.forEach(r=>{r.font=font;r.fontSize=size;r.color=color;r.bold=bold;r.align=align;});
+  renderAll();renderList();toast('전체 적용 완료!','ok');
+}
+
+function updateFontPrev(){
+  const f=document.getElementById('gFont').value;
+  document.getElementById('fontPrev').style.fontFamily=f;
+}
+
+function doExport(){
+  // 원본 해상도 캔버스로 내보내기
+  if(!resultCanvas){ toast('먼저 번역을 실행하세요','ng'); return; }
+  const a=document.createElement('a');
+  a.download=`translated_${Date.now()}.png`;
+  a.href=resultCanvas.toDataURL('image/png'); // 원본 해상도 PNG
+  a.click();
+  toast(`내보내기 완료! (${resultCanvas.width}×${resultCanvas.height}px)`,'ok');
+}
+
+function toB64(img,w,h){
+  return new Promise(res=>{
+    const c=document.createElement('canvas');
+    // 최대 1500px로 축소해서 전송 (API 정확도 유지하면서 크기 줄임)
+    const maxPx=1500;
+    let sw=w,sh=h;
+    if(sw>maxPx||sh>maxPx){const ratio=Math.min(maxPx/sw,maxPx/sh);sw=Math.round(sw*ratio);sh=Math.round(sh*ratio);}
+    c.width=sw;c.height=sh;
+    c.getContext('2d').drawImage(img,0,0,sw,sh);
+    res(c.toDataURL('image/jpeg',.80).split(',')[1]);
+  });
+}
+
+function switchTab(tab){
+  document.getElementById('tab-regions').style.display=tab==='regions'?'':'none';
+  document.getElementById('tab-settings').style.display=tab==='settings'?'':'none';
+  document.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('on',(i===0&&tab==='regions')||(i===1&&tab==='settings')));
+}
+
+function setLoading(show,txt=''){const el=document.getElementById('loading');el.classList.toggle('show',show);if(txt)document.getElementById('ltxt').textContent=txt;}
+function setPill(txt,cls){const p=document.getElementById('pill');p.textContent=txt;p.className='pill'+(cls?' '+cls:'');}
+function toast(msg,cls=''){const t=document.getElementById('toast');t.textContent=msg;t.className='toast'+(cls?' '+cls:'');void t.offsetWidth;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+</script>
+</body>
+</html>
