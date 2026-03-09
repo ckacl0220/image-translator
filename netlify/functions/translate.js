@@ -17,10 +17,19 @@ exports.handler = async (event) => {
 
     const prompt = `이 이미지에서 중국어 텍스트를 모두 찾아 한국어로 번역해주세요.
 
-각 텍스트 영역에 대해 JSON 배열로만 반환하세요. 다른 텍스트 없이.
-필드: x(좌상단X,${imageWidth}px기준,정수), y(좌상단Y,${imageHeight}px기준,정수), w(너비,정수), h(높이,정수), original(원본중국어), translated(자연스러운한국어 상세페이지 스타일), fontSize(적절한크기,정수), color(원본텍스트색상HEX), bold(true/false), align(center/left/right)
+이미지 실제 크기: 가로 ${imageWidth}px, 세로 ${imageHeight}px
 
-예: [{"x":10,"y":20,"w":300,"h":40,"original":"你好","translated":"안녕하세요","fontSize":24,"color":"#222222","bold":false,"align":"center"}]`;
+좌표 규칙 (매우 중요):
+- x, y, w, h 는 반드시 위의 이미지 실제 픽셀 크기 기준으로 측정
+- w(너비), h(높이)는 텍스트가 차지하는 실제 영역보다 20% 여유있게 크게 잡을 것
+- fontSize는 원본 텍스트의 실제 픽셀 크기를 추정 (이미지 크기 대비 비율로 계산)
+- 텍스트가 이미지 전체 너비에 걸쳐 있으면 w를 이미지 너비에 맞게 크게 설정
+- color는 원본 텍스트 색상 HEX (#000000 형식)
+- bold: 원본 굵기 기준
+- align: 텍스트 정렬
+
+JSON 배열만 반환. 다른 텍스트 없이.
+[{"x":정수,"y":정수,"w":정수,"h":정수,"original":"원본중국어","translated":"자연스러운한국어","fontSize":정수,"color":"#XXXXXX","bold":false,"align":"center"}]`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
