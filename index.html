@@ -257,13 +257,9 @@ let origImg=null, imgW=0, imgH=0;
 let regions=[], selId=null, scale=1, resultCanvas=null;
 
 window.onload=()=>{
-  const k=localStorage.getItem('anthropic_key');
-  if(k) document.getElementById('apiKey').value=k;
   updateFontPrev();
 };
 
-function saveKey(){ const k=document.getElementById('apiKey').value.trim(); if(k){localStorage.setItem('anthropic_key',k);toast('API 키 저장됨','ok');} }
-function getKey(){ return document.getElementById('apiKey').value.trim(); }
 
 function onDrop(e){ e.preventDefault();dz().classList.remove('over');const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))readFile(f); }
 function onDragOver(e){ e.preventDefault();dz().classList.add('over'); }
