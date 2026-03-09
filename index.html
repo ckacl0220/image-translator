@@ -303,7 +303,7 @@ async function doTranslate(){
   setLoading(true,'이미지 분석 & 번역 중...');setPill('분석 중','busy');
   try{
     const b64=await toB64(origImg,imgW,imgH);
-    const raw=await callGemini(key,b64);
+    const raw=await callClaude(b64);
     regions=parseRegions(raw);
     setLoading(true,'렌더링 중...');
     await renderAll();
@@ -315,7 +315,7 @@ async function doTranslate(){
   }finally{ setLoading(false); }
 }
 
-async function callGemini(key,b64){
+async function callClaude(b64){
   const res=await fetch('/.netlify/functions/translate',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
