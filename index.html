@@ -573,7 +573,7 @@ async function doTranslate(){
   finally{setLoading(false);}
 }
 async function callAPI(b64){
-  const res=await fetch('/.netlify/functions/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64:b64,imageWidth:imgW,imageHeight:imgH})});
+  const res=await fetch('/api/translate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({imageBase64:b64,imageWidth:imgW,imageHeight:imgH})});
   const raw=await res.text();
   if(!res.ok){let m=`HTTP ${res.status}`;try{m=JSON.parse(raw).error||m;}catch(e){}throw new Error(m);}
   let d; try{d=JSON.parse(raw);}catch(e){throw new Error('파싱 오류');}
