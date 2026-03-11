@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>이미지 번역기</title>
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100;200;300;400;500;600;700;800;900&family=Black+Han+Sans&family=Gowun+Dodum&family=Jua&family=Do+Hyeon&family=Gamja+Flower&display=swap');
 :root{--bg:#0e0e10;--s1:#17171a;--s2:#202025;--border:#32323e;--acc:#6c63ff;--acc2:#ff6584;--text:#ececf4;--muted:#7a7a90;--green:#4ade80;--yellow:#fbbf24;--orange:#f97316;}
@@ -59,7 +60,7 @@ header h1{font-size:14px;font-weight:600;}header .sub{font-size:10px;color:var(-
 #cwrap{display:none;position:relative;flex-shrink:0;}
 #mainCanvas{display:block;border-radius:7px;box-shadow:0 6px 32px #00000099;}
 #mainCanvas.er-cur{cursor:none;}#mainCanvas.ey-cur{cursor:crosshair;}
-#overlay{position:absolute;top:0;left:0;pointer-events:none;}
+#overlay{position:absolute;top:0;left:0;pointer-events:none;z-index:6;width:100%;height:100%;}
 
 /* 텍스트박스 오버레이 */
 .rbox{position:absolute;border:2px solid transparent;background:transparent;pointer-events:all;cursor:pointer;}
@@ -166,6 +167,25 @@ input[type=file]{display:none;}
 #eyePrev{position:fixed;width:44px;height:44px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 10px #000a;display:none;pointer-events:none;z-index:9999;transform:translate(-50%,-110%);}
 .undo-hint{position:fixed;bottom:48px;left:50%;transform:translateX(-50%);background:#1a1a22;border:1px solid var(--border);border-radius:5px;padding:4px 12px;font-size:10px;color:var(--muted);z-index:9998;pointer-events:none;opacity:0;transition:opacity .25s;}
 .undo-hint.show{opacity:1;}
+/* LaMa AI 인페인팅 */
+.lama-card{background:rgba(74,222,128,.06);border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:11px;display:flex;flex-direction:column;gap:8px;margin-bottom:11px;}
+.lama-card.hide{display:none;}
+.lama-card h4{font-size:9px;color:var(--green);text-transform:uppercase;letter-spacing:.5px;}
+.lama-status{font-size:10px;padding:6px 10px;border-radius:6px;background:var(--bg);border:1px solid var(--border);color:var(--muted);text-align:center;}
+.lama-status.ready{border-color:#4ade8033;color:var(--green);}
+.lama-status.loading{border-color:#fbbf2433;color:var(--yellow);}
+.lama-status.error{border-color:#ff658433;color:var(--acc2);}
+.mask-canvas{position:absolute;top:0;left:0;pointer-events:none;opacity:0.6;border-radius:7px;z-index:8;}
+.mask-canvas.active{pointer-events:all;cursor:none;}
+.lama-btn{width:100%;padding:8px;background:linear-gradient(135deg,#4ade80,#22c55e);border:none;border-radius:6px;color:#000;font-size:11px;font-family:inherit;font-weight:700;cursor:pointer;transition:all .14s;}
+.lama-btn:hover{opacity:.88;}
+.lama-btn:disabled{opacity:.35;cursor:not-allowed;}
+.lama-progress{height:4px;background:var(--border);border-radius:2px;overflow:hidden;display:none;}
+.lama-progress.show{display:block;}
+.lama-progress-bar{height:100%;background:linear-gradient(90deg,#4ade80,#22c55e);width:0%;transition:width .3s;border-radius:2px;}
+.brush-mode-row{display:flex;gap:4px;}
+.brush-mode-btn{flex:1;padding:5px;border-radius:4px;border:1px solid var(--border);background:var(--bg);color:var(--muted);font-size:10px;font-family:inherit;cursor:pointer;transition:all .12s;}
+.brush-mode-btn.on{border-color:var(--green);color:var(--green);background:rgba(74,222,128,.1);}
 </style>
 </head>
 <body>
@@ -199,7 +219,7 @@ input[type=file]{display:none;}
       <input type="file" id="fi" accept="image/*" onchange="loadImg(event)">
       <div class="sep"></div>
       <button class="btn pri" id="trBtn" onclick="doTranslate()" disabled>🌐 번역</button>
-      <button class="btn" id="erBtn" onclick="toggleErase()" style="display:none">🧹 지우개</button>
+      <button class="btn" id="erBtn" onclick="toggleErase()" style="display:none">🤖 AI 지우개</button>
       <div class="sep"></div>
       <button class="btn dim" id="undoBtn" onclick="doUndo()" title="Ctrl+Z">↩ 되돌리기</button>
       <button class="btn dim" id="redoBtn" onclick="doRedo()" title="Ctrl+X">↪ 다시실행</button>
@@ -212,6 +232,7 @@ input[type=file]{display:none;}
       <div id="cwrap">
         <canvas id="mainCanvas"></canvas>
         <div id="overlay"></div>
+        <canvas id="maskCanvas" class="mask-canvas"></canvas>
         <div id="erCursor"></div>
       </div>
     </div>
@@ -273,31 +294,37 @@ input[type=file]{display:none;}
     <!-- 설정 탭 -->
     <div class="panel" id="tab-settings" style="display:none">
       <div class="gset">
-        <!-- 지우개 카드 -->
-        <div class="erase-card" id="erCard">
-          <h4>🧹 수동 지우개</h4>
+        <!-- LaMa AI 지우개 카드 -->
+        <div class="lama-card" id="erCard">
+          <h4>🤖 AI 지우개 (LaMa)</h4>
+          <div class="lama-status" id="lamaStatus">⏳ AI 모델 로딩 중... (최초 1회, 약 208MB)</div>
+          <div class="lama-progress" id="lamaProgress"><div class="lama-progress-bar" id="lamaProgressBar"></div></div>
           <div class="fl"><label>브러시 크기</label>
             <div style="display:flex;gap:7px;align-items:center">
-              <input type="range" min="5" max="150" value="20" id="erSize" oninput="erSizeN.value=this.value">
-              <input type="number" class="fi" id="erSizeN" value="20" style="width:50px" oninput="erSize.value=this.value">
+              <input type="range" min="10" max="200" value="40" id="erSize" oninput="erSizeN.value=this.value;updateMaskCursor()">
+              <input type="number" class="fi" id="erSizeN" value="40" style="width:50px" oninput="erSize.value=this.value;updateMaskCursor()">
             </div>
           </div>
-          <div class="fl"><label>채우기 방식</label>
-            <select class="fi" id="erFill" onchange="onErFillChange()">
-              <option value="feather">페더 (자연스러운)</option>
-              <option value="auto">자동 (주변색)</option>
-              <option value="white">흰색</option>
-              <option value="blur">블러</option>
-              <option value="eyedrop">스포이드 색상</option>
-            </select>
+          <div class="fl"><label>브러시 모드</label>
+            <div class="brush-mode-row">
+              <button class="brush-mode-btn on" id="bmErase" onclick="setBrushMode('erase')">✏️ 마스크</button>
+              <button class="brush-mode-btn" id="bmClear" onclick="setBrushMode('clear')">🗑 지우기</button>
+            </div>
           </div>
-          <!-- 스포이드 행 -->
+          <div class="hint">브러시로 지울 영역을 빨갛게 칠한 뒤<br>아래 버튼을 눌러 AI로 자동 복원하세요</div>
+          <button class="lama-btn" id="lamaRunBtn" onclick="runLama()" disabled>✨ AI로 지우기</button>
+          <div style="display:flex;gap:5px;margin-top:2px">
+            <button class="abtn" style="flex:1" onclick="clearMask()">마스크 초기화</button>
+            <button class="abtn" style="flex:1;border-color:rgba(255,101,132,.4);color:var(--acc2)" onclick="toggleErase()">✕ 종료</button>
+          </div>
+          <!-- 스포이드 -->
           <div class="eye-row" id="eyeRow">
-            <button class="btn act" id="eyBtn" onclick="toggleEyedrop()" style="flex:1;justify-content:center;font-size:10px">💧 스포이드 찍기</button>
+            <button class="btn act" id="eyBtn" onclick="toggleEyedrop()" style="flex:1;justify-content:center;font-size:10px">💧 스포이드</button>
             <div class="eye-swatch" id="eySwatch" title="현재 스포이드 색상"></div>
           </div>
-          <button class="abtn" style="border-color:rgba(255,101,132,.4);color:var(--acc2)" onclick="toggleErase()">✕ 지우개 종료</button>
         </div>
+        <!-- 숨겨진 채우기 선택 (스포이드용) -->
+        <select id="erFill" style="display:none"><option value="feather">feather</option><option value="eyedrop">eyedrop</option></select>
         <!-- 기본 폰트 -->
         <div class="gcard">
           <h4>기본 폰트</h4>
@@ -526,7 +553,7 @@ function readFile(file){
       origImg=img; imgW=img.width; imgH=img.height;
       origCanvas=null; // 캐시 리셋
       regions=[]; nextId=0; selId=null; mselIds.clear();
-      wmData=null; eraseMode=false; hist=[]; histIdx=-1;
+      wmData=null; eraseMode=false; erasing=false; maskEventsAttached=false; hist=[]; histIdx=-1;
       layers=[{id:'bg',name:'배경 이미지',visible:true,locked:false}];
       dropZone.style.display='none'; cwrap.style.display='block';
       trBtn.disabled=false;
@@ -551,7 +578,7 @@ function setupCanvas(){
   overlay.style.cssText=`position:absolute;top:0;left:0;width:${mainCanvas.width}px;height:${mainCanvas.height}px;pointer-events:none;`;
   // 원본 표시
   mainCanvas.getContext('2d').drawImage(origImg,0,0,mainCanvas.width,mainCanvas.height);
-  setupEraseEv(mainCanvas); setupEyeEv(mainCanvas);
+  setupEyeEv(mainCanvas); // EraseEv는 toggleErase에서 동적으로 설정
   // 빈곳 클릭 → 선택 해제
   cscroll.addEventListener('mousedown',e=>{
     if(e.target===mainCanvas||e.target===cscroll){
@@ -720,9 +747,14 @@ function renderCanvas(){
   mctx.drawImage(off,0,0,cvs.width,cvs.height);
   // 오버레이는 별도 유지
   renderOverlay();
-  // 렌더 후 지우개 캔버스 재초기화 (eraseMode 중이면 다시 캡처)
-  if(eraseMode){ initEraseCanvas(); } else { eraseCanvas=null; }
+  // 마스크 캔버스 위치 동기화
+  if (eraseMode) {
+    const mc = document.getElementById('maskCanvas');
+    const rect = mainCanvas.getBoundingClientRect();
+    if (mc && (mc.width !== Math.round(rect.width) || mc.height !== Math.round(rect.height))) initMaskCanvas();
+  }
 }
+
 
 // 원본이미지에서 주변색 샘플링 → 부드럽게 채우기
 function inpaintFromOrig(ctx, r){
@@ -1118,148 +1150,384 @@ function applyGlobal(){
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-// 지우개 (부드러운 브러시 - feather)
+// LaMa AI 인페인팅 시스템 (완전 재작성)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function toggleErase(){
-  eraseMode=!eraseMode;
-  erBtn.classList.toggle('act',eraseMode);erBtn.textContent=eraseMode?'🧹 ON':'🧹 지우개';
-  erCard.classList.toggle('show',eraseMode);
-  mainCanvas.classList.toggle('er-cur',eraseMode);
-  if(!eraseMode){
-    erCursor.style.display='none';
-    if(eyedropMode)toggleEyedrop();
-    eraseCanvas=null; // 지우개 종료 시 캔버스 초기화
-  } else {
-    initEraseCanvas(); // 지우개 시작 시 현재 상태 캡처
+let lamaSession = null;
+let lamaLoading = false;
+let lamaReady = false;
+let eraseMode = false;
+let erasing = false;
+let maskCtx = null;
+let brushMode = 'erase';
+let eraseCanvas = null;
+let maskEventsAttached = false;
+
+// HuggingFace CDN (CORS 허용) - 여러 미러 시도
+const LAMA_MODEL_URLS = [
+  'https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx',
+  'https://huggingface.co/g-ronimo/lama/resolve/main/lama_fp32.onnx',
+];
+const LAMA_SIZE = 512;
+
+// LaMa 모델 로드 (앱 시작 시 자동)
+async function loadLama() {
+  if (lamaReady || lamaLoading) return;
+  lamaLoading = true;
+  const statusEl = document.getElementById('lamaStatus');
+  const progressEl = document.getElementById('lamaProgress');
+  const barEl = document.getElementById('lamaProgressBar');
+  try {
+    setLamaStatus('loading', '⏳ AI 모델 다운로드 중... (208MB, 최초 1회)');
+    progressEl.classList.add('show');
+    // fetch with progress
+    let resp = null;
+    for (const url of LAMA_MODEL_URLS) {
+      try {
+        resp = await fetch(url);
+        if (resp.ok) break;
+      } catch(e) { console.warn('URL failed:', url, e); }
+    }
+    if (!resp || !resp.ok) throw new Error('모델 다운로드 실패 (네트워크 확인 필요)');
+    const total = parseInt(resp.headers.get('content-length') || '0');
+    const reader = resp.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.length;
+      if (total > 0) {
+        const pct = Math.round(received / total * 100);
+        barEl.style.width = pct + '%';
+        setLamaStatus('loading', `⏳ 다운로드 중... ${pct}% (${Math.round(received/1024/1024)}MB)`);
+      }
+    }
+    barEl.style.width = '100%';
+    setLamaStatus('loading', '⚙️ AI 모델 초기화 중...');
+    const modelBuffer = new Uint8Array(chunks.reduce((acc, c) => acc + c.length, 0));
+    let offset = 0;
+    for (const chunk of chunks) { modelBuffer.set(chunk, offset); offset += chunk.length; }
+    // ONNX 세션 생성 (WebGPU → CPU fallback)
+    for (const ep of ['webgpu', 'wasm']) {
+      try {
+        lamaSession = await ort.InferenceSession.create(modelBuffer.buffer, { executionProviders: [ep] });
+        console.log('LaMa loaded with:', ep);
+        break;
+      } catch(e) { console.warn('EP failed:', ep, e); }
+    }
+    if (!lamaSession) throw new Error('모델 초기화 실패');
+    lamaReady = true;
+    progressEl.classList.remove('show');
+    setLamaStatus('ready', '✅ AI 준비 완료! 브러시로 영역을 칠하세요');
+    document.getElementById('lamaRunBtn').disabled = false;
+  } catch(e) {
+    setLamaStatus('error', '❌ 모델 로드 실패: ' + e.message);
+    console.error('LaMa load error:', e);
+  } finally {
+    lamaLoading = false;
+  }
+}
+
+function setLamaStatus(cls, msg) {
+  const el = document.getElementById('lamaStatus');
+  if (!el) return;
+  el.className = 'lama-status ' + cls;
+  el.textContent = msg;
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// 마스크 캔버스: mainCanvas와 완전 동기화
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+function initMaskCanvas() {
+  const mc = document.getElementById('maskCanvas');
+  if (!mc || !mainCanvas) return;
+  // 화면 표시 크기 (CSS px)
+  const rect = mainCanvas.getBoundingClientRect();
+  // 내부 해상도 = 화면 크기와 1:1 (DPR 무시, 단순화)
+  mc.width  = Math.round(rect.width);
+  mc.height = Math.round(rect.height);
+  mc.style.width  = rect.width  + 'px';
+  mc.style.height = rect.height + 'px';
+  mc.style.top    = '0';
+  mc.style.left   = '0';
+  maskCtx = mc.getContext('2d');
+  maskCtx.clearRect(0, 0, mc.width, mc.height);
+  console.log('maskCanvas init:', mc.width, mc.height, 'mainCanvas:', mainCanvas.width, mainCanvas.height, 'css:', rect.width, rect.height);
+}
+
+function clearMask() {
+  if (maskCtx) maskCtx.clearRect(0, 0, maskCtx.canvas.width, maskCtx.canvas.height);
+}
+
+function setBrushMode(mode) {
+  brushMode = mode;
+  document.getElementById('bmErase').classList.toggle('on', mode === 'erase');
+  document.getElementById('bmClear').classList.toggle('on', mode === 'clear');
+}
+
+// 지우개 토글
+function toggleErase() {
+  eraseMode = !eraseMode;
+  const mc = document.getElementById('maskCanvas');
+  erBtn.classList.toggle('act', eraseMode);
+  erBtn.textContent = eraseMode ? '🤖 ON' : '🤖 AI 지우개';
+  document.getElementById('erCard').classList.toggle('show', eraseMode);
+  if (eraseMode) {
+    initMaskCanvas();
+    mc.classList.add('active');
+    mainCanvas.style.pointerEvents = 'none';
+    attachMaskEvents(mc);
     switchTab('settings');
+    if (!lamaReady && !lamaLoading) loadLama();
+  } else {
+    mc.classList.remove('active');
+    mainCanvas.style.pointerEvents = '';
+    clearMask();
+    erCursor.style.display = 'none';
+    if (eyedropMode) toggleEyedrop();
   }
   renderOverlay();
 }
-function setupEraseEv(cvs){
-  cvs.addEventListener('mousedown',e=>{if(!eraseMode)return;erasing=true;eraseAt(e);});
-  cvs.addEventListener('mousemove',e=>{
-    if(!eraseMode)return;
-    const rect=cvs.getBoundingClientRect();
-    const sz=parseInt(erSize.value)*scale;
-    erCursor.style.display='block';
-    erCursor.style.left=(e.clientX-rect.left)+'px';erCursor.style.top=(e.clientY-rect.top)+'px';
-    erCursor.style.width=(sz*2)+'px';erCursor.style.height=(sz*2)+'px';
-    if(erasing)eraseAt(e);
+
+// setupEraseEv: 레거시 호환 (아무것도 안 함 - attachMaskEvents로 대체)
+function setupEraseEv(cvs) {}
+
+function attachMaskEvents(mc) {
+  if (maskEventsAttached) return;
+  maskEventsAttached = true;
+  mc.addEventListener('mousedown', e => {
+    if (!eraseMode) return;
+    erasing = true;
+    paintMask(e);
+    e.preventDefault();
   });
-  cvs.addEventListener('mouseup',()=>{if(erasing)snapshot();erasing=false;});
-  cvs.addEventListener('mouseleave',()=>{if(erasing)snapshot();erasing=false;erCursor.style.display='none';});
+  mc.addEventListener('mousemove', e => {
+    if (!eraseMode) { erCursor.style.display='none'; return; }
+    const rect = mc.getBoundingClientRect();
+    const sz = parseInt(erSize.value); // 1:1이므로 그대로
+    erCursor.style.display = 'block';
+    erCursor.style.left = (e.clientX - rect.left) + 'px';
+    erCursor.style.top  = (e.clientY - rect.top)  + 'px';
+    erCursor.style.width  = (sz * 2) + 'px';
+    erCursor.style.height = (sz * 2) + 'px';
+    if (erasing) paintMask(e);
+  });
+  mc.addEventListener('mouseup',    () => { erasing = false; });
+  mc.addEventListener('mouseleave', () => { erasing = false; erCursor.style.display = 'none'; });
+  // 터치 지원
+  mc.addEventListener('touchstart', e => {
+    if (!eraseMode) return;
+    erasing = true;
+    paintMask(e.touches[0]);
+    e.preventDefault();
+  }, {passive:false});
+  mc.addEventListener('touchmove', e => {
+    if (!eraseMode || !erasing) return;
+    paintMask(e.touches[0]);
+    e.preventDefault();
+  }, {passive:false});
+  mc.addEventListener('touchend', () => { erasing = false; });
 }
 
-// 부드러운 지우개 - Gaussian 스타일 브러시로 feather 적용
-// 지우개용 작업 캔버스 (누적 적용)
-let eraseCanvas=null;
+function updateMaskCursor() {}
 
-function initEraseCanvas(){
-  // 현재 화면 상태를 eraseCanvas에 복사
-  if(!origImg)return;
-  eraseCanvas=document.createElement('canvas');
-  eraseCanvas.width=imgW; eraseCanvas.height=imgH;
-  const ctx=eraseCanvas.getContext('2d');
-  ctx.drawImage(origImg,0,0);
-  for(const r of regions){if(!isLayerVisible(r.id))continue;inpaintFromOrig(ctx,r);drawText(ctx,r);}
-  if(wmData){const wh=Math.round(wmData.naturalHeight*(wmW/wmData.naturalWidth));ctx.globalAlpha=wmOpacity;ctx.drawImage(wmData,wmX,wmY,wmW,wh);ctx.globalAlpha=1;}
-}
+// 마스크 그리기 - maskCanvas 내부 해상도 = CSS px (1:1)
+function paintMask(e) {
+  if (!maskCtx) { initMaskCanvas(); if (!maskCtx) return; }
+  const mc = document.getElementById('maskCanvas');
+  const rect = mc.getBoundingClientRect();
+  // 내부해상도 = CSS px 이므로 그냥 offset 사용
+  const cx = e.clientX - rect.left;
+  const cy = e.clientY - rect.top;
+  const r  = parseInt(erSize.value);
 
-function eraseAt(e){
-  if(!eraseCanvas) initEraseCanvas();
-  const cvs=mainCanvas;
-  const rect=cvs.getBoundingClientRect();
-  const mx=(e.clientX-rect.left)/scale, my=(e.clientY-rect.top)/scale;
-  const size=parseInt(erSize.value);
-  const method=erFill.value;
-  const ctx=eraseCanvas.getContext('2d');
-
-  if(method==='white'){
-    applyFeatherBrush(ctx,mx,my,size,'#ffffff',1);
-  }else if(method==='eyedrop'){
-    applyFeatherBrush(ctx,mx,my,size,eyedropColor,1);
-  }else if(method==='blur'){
-    const rx=Math.max(0,Math.round(mx-size)), ry=Math.max(0,Math.round(my-size));
-    const rw=Math.min(imgW-rx,size*2), rh=Math.min(imgH-ry,size*2);
-    if(rw>0&&rh>0) ctx.putImageData(boxBlur(ctx.getImageData(rx,ry,rw,rh),Math.round(size*0.4)),rx,ry);
-  }else{
-    applyFeatherFromOrig(ctx,mx,my,size);
+  if (brushMode === 'erase') {
+    const grad = maskCtx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0,   'rgba(255,50,50,1.0)');
+    grad.addColorStop(0.6, 'rgba(255,50,50,0.85)');
+    grad.addColorStop(1,   'rgba(255,50,50,0)');
+    maskCtx.globalCompositeOperation = 'source-over';
+    maskCtx.fillStyle = grad;
+    maskCtx.beginPath();
+    maskCtx.arc(cx, cy, r, 0, Math.PI * 2);
+    maskCtx.fill();
+  } else {
+    maskCtx.globalCompositeOperation = 'destination-out';
+    maskCtx.beginPath();
+    maskCtx.arc(cx, cy, r * 1.3, 0, Math.PI * 2);
+    maskCtx.fill();
+    maskCtx.globalCompositeOperation = 'source-over';
   }
-
-  // 화면에 표시
-  const mctx=mainCanvas.getContext('2d');
-  mctx.clearRect(0,0,mainCanvas.width,mainCanvas.height);
-  mctx.drawImage(eraseCanvas,0,0,mainCanvas.width,mainCanvas.height);
 }
 
-// Gaussian 느낌의 부드러운 브러시
-function applyFeatherBrush(ctx,cx,cy,r,fillColor,opacity){
-  // 원형 그라디언트로 부드럽게 채우기
-  const px=hexToRgb(fillColor)||{r:255,g:255,b:255};
-  const imgD=ctx.getImageData(Math.max(0,Math.round(cx-r)),Math.max(0,Math.round(cy-r)),Math.min(imgW,r*2),Math.min(imgH,r*2));
-  const ox=Math.max(0,Math.round(cx-r)), oy=Math.max(0,Math.round(cy-r));
-  for(let y=0;y<imgD.height;y++) for(let x=0;x<imgD.width;x++){
-    const wx=ox+x, wy=oy+y;
-    const dist=Math.sqrt((wx-cx)**2+(wy-cy)**2);
-    if(dist>=r) continue;
-    // Gaussian falloff
-    const t=1-dist/r;
-    const a=t*t*(3-2*t)*opacity; // smoothstep
-    const i=(y*imgD.width+x)*4;
-    imgD.data[i  ]=Math.round(imgD.data[i  ]*(1-a)+px.r*a);
-    imgD.data[i+1]=Math.round(imgD.data[i+1]*(1-a)+px.g*a);
-    imgD.data[i+2]=Math.round(imgD.data[i+2]*(1-a)+px.b*a);
-    imgD.data[i+3]=255;
-  }
-  ctx.putImageData(imgD,ox,oy);
-}
+// LaMa 실행 - 핵심!
+async function runLama() {
+  if (!lamaReady) { toast('AI 모델이 아직 로딩 중이에요', 'ng'); return; }
+  const mc = document.getElementById('maskCanvas');
+  const mdata = maskCtx.getImageData(0, 0, mc.width, mc.height);
+  // 마스크가 있는지 확인
+  let hasMask = false;
+  for (let i = 3; i < mdata.data.length; i += 4) { if (mdata.data[i] > 10) { hasMask = true; break; } }
+  if (!hasMask) { toast('먼저 지울 영역을 브러시로 칠하세요', 'ng'); return; }
 
-function applyFeatherFromOrig(ctx,cx,cy,r){
-  const oc=getOrigCtx();
-  const ox=Math.max(0,Math.round(cx-r)), oy=Math.max(0,Math.round(cy-r));
-  const ow=Math.min(imgW-ox,r*2), oh=Math.min(imgH-oy,r*2);
-  if(ow<=0||oh<=0)return;
-  // 원본에서 해당 영역 픽셀 가져오기
-  const origPx=oc.getImageData(ox,oy,ow,oh);
-  const curPx=ctx.getImageData(ox,oy,ow,oh);
-  const out=new ImageData(new Uint8ClampedArray(curPx.data),ow,oh);
-  for(let y=0;y<oh;y++) for(let x=0;x<ow;x++){
-    const wx=ox+x, wy=oy+y;
-    const dist=Math.sqrt((wx-cx)**2+(wy-cy)**2);
-    if(dist>=r)continue;
-    const t=1-dist/r;
-    const a=t*t*(3-2*t); // smoothstep
-    const i=(y*ow+x)*4;
-    out.data[i  ]=Math.round(curPx.data[i  ]*(1-a)+origPx.data[i  ]*a);
-    out.data[i+1]=Math.round(curPx.data[i+1]*(1-a)+origPx.data[i+1]*a);
-    out.data[i+2]=Math.round(curPx.data[i+2]*(1-a)+origPx.data[i+2]*a);
-    out.data[i+3]=255;
-  }
-  ctx.putImageData(out,ox,oy);
-}
+  setLoading(true, 'AI 인페인팅 중...');
+  try {
+    // 1) 원본 크기 이미지 캔버스 생성
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = imgW; srcCanvas.height = imgH;
+    const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.drawImage(origImg, 0, 0);
+    for (const r of regions) { if (!isLayerVisible(r.id)) continue; inpaintFromOrig(srcCtx, r); drawText(srcCtx, r); }
 
-function boxBlur(id,r){
-  const d=new ImageData(new Uint8ClampedArray(id.data),id.width,id.height);
-  for(let y=0;y<id.height;y++) for(let x=0;x<id.width;x++){
-    let R=0,G=0,B=0,c=0;
-    for(let dy=-r;dy<=r;dy++) for(let dx=-r;dx<=r;dx++){
-      const nx=Math.min(Math.max(x+dx,0),id.width-1),ny=Math.min(Math.max(y+dy,0),id.height-1);
-      const i=(ny*id.width+nx)*4;R+=d.data[i];G+=d.data[i+1];B+=d.data[i+2];c++;
+    // 2) 마스크(CSS px 해상도) → 원본 이미지 크기로 변환
+    //    mc.width/height = 화면 CSS px, imgW/imgH = 실제 이미지 px
+    const maskFull = document.createElement('canvas');
+    maskFull.width = imgW; maskFull.height = imgH;
+    const mfCtx = maskFull.getContext('2d');
+    // 알파채널 기반 마스크를 흰색 채워서 이진화
+    mfCtx.drawImage(mc, 0, 0, mc.width, mc.height, 0, 0, imgW, imgH);
+    // 마스크를 이진화: 알파>0인 픽셀 → 흰색 불투명
+    const mData = mfCtx.getImageData(0, 0, imgW, imgH);
+    for (let i = 0; i < mData.data.length; i+=4) {
+      if (mData.data[i+3] > 20) {
+        mData.data[i]=255; mData.data[i+1]=255; mData.data[i+2]=255; mData.data[i+3]=255;
+      } else {
+        mData.data[i]=0; mData.data[i+1]=0; mData.data[i+2]=0; mData.data[i+3]=255;
+      }
     }
-    const i=(y*id.width+x)*4;d.data[i]=R/c;d.data[i+1]=G/c;d.data[i+2]=B/c;d.data[i+3]=255;
+    mfCtx.putImageData(mData, 0, 0);
+
+    // 3) LaMa 입력: 512x512로 리사이즈
+    const imgTile = resizeCanvas(srcCanvas, LAMA_SIZE);
+    const maskTile = resizeCanvas(maskFull, LAMA_SIZE);
+
+    // 4) 텐서 변환
+    const imgTensor = canvasToTensor(imgTile);
+    const maskTensor = maskToTensor(maskTile);
+
+    // 5) LaMa 실행
+    const results = await lamaSession.run({ image: imgTensor, mask: maskTensor });
+    const output = results[Object.keys(results)[0]];
+
+    // 6) 출력을 원본 크기로 복원
+    const outCanvas = tensorToCanvas(output, LAMA_SIZE);
+    // 원본 크기로 스케일
+    const finalCanvas = document.createElement('canvas');
+    finalCanvas.width = imgW; finalCanvas.height = imgH;
+    const fCtx = finalCanvas.getContext('2d');
+    // 원본 이미지 먼저
+    fCtx.drawImage(srcCanvas, 0, 0);
+    // 마스크 영역만 LaMa 결과로 교체
+    fCtx.save();
+    // 마스크를 클리핑 영역으로 사용
+    const maskAlpha = document.createElement('canvas');
+    maskAlpha.width = imgW; maskAlpha.height = imgH;
+    const maCtx = maskAlpha.getContext('2d');
+    maCtx.drawImage(maskFull, 0, 0);
+    // 마스크 영역에만 LaMa 결과 그리기
+    fCtx.globalCompositeOperation = 'source-over';
+    // 마스크 팽창 (부드러운 경계)
+    const lamaScaled = document.createElement('canvas');
+    lamaScaled.width = imgW; lamaScaled.height = imgH;
+    lamaScaled.getContext('2d').drawImage(outCanvas, 0, 0, LAMA_SIZE, LAMA_SIZE, 0, 0, imgW, imgH);
+    // 마스크 기반으로 블렌딩
+    blendWithMask(fCtx, lamaScaled, maskFull, imgW, imgH);
+    fCtx.restore();
+
+    // 7) origImg 업데이트 (결과를 새 원본으로)
+    const newImg = new Image();
+    newImg.onload = () => {
+      origImg = newImg;
+      origCanvas = null; // 캐시 리셋
+      clearMask();
+      renderCanvas();
+      drawOrig(); // 원본 패널 업데이트
+      snapshot();
+      setLoading(false);
+      toast('✨ AI 인페인팅 완료!', 'ok');
+    };
+    newImg.src = finalCanvas.toDataURL('image/png');
+  } catch(e) {
+    console.error('LaMa error:', e);
+    setLoading(false);
+    toast('AI 오류: ' + e.message, 'ng');
   }
-  return d;
 }
-function hexToRgb(hex){const m=hex.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);return m?{r:parseInt(m[1],16),g:parseInt(m[2],16),b:parseInt(m[3],16)}:null;}
+
+// 마스크 기반 블렌딩 (마스크 흰 영역 = LaMa 결과)
+function blendWithMask(dstCtx, lamaCanvas, maskCanvas, w, h) {
+  const dst = dstCtx.getImageData(0, 0, w, h);
+  const lama = lamaCanvas.getContext('2d').getImageData(0, 0, w, h);
+  const mask = maskCanvas.getContext('2d').getImageData(0, 0, w, h);
+  for (let i = 0; i < dst.data.length; i += 4) {
+    const a = mask.data[i + 3] / 255; // 마스크 알파값
+    if (a > 0) {
+      dst.data[i]   = Math.round(dst.data[i]   * (1-a) + lama.data[i]   * a);
+      dst.data[i+1] = Math.round(dst.data[i+1] * (1-a) + lama.data[i+1] * a);
+      dst.data[i+2] = Math.round(dst.data[i+2] * (1-a) + lama.data[i+2] * a);
+    }
+  }
+  dstCtx.putImageData(dst, 0, 0);
+}
+
+// 캔버스 리사이즈
+function resizeCanvas(src, size) {
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  c.getContext('2d').drawImage(src, 0, 0, src.width, src.height, 0, 0, size, size);
+  return c;
+}
+
+// Image Canvas → Float32 Tensor [1,3,H,W] 0~1
+function canvasToTensor(canvas) {
+  const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const n = canvas.width * canvas.height;
+  const f32 = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    f32[i]       = data[i*4]   / 255.0; // R
+    f32[i + n]   = data[i*4+1] / 255.0; // G
+    f32[i + n*2] = data[i*4+2] / 255.0; // B
+  }
+  return new ort.Tensor('float32', f32, [1, 3, canvas.height, canvas.width]);
+}
+
+// Mask Canvas → Float32 Tensor [1,1,H,W] 0 or 1
+// 이진화된 마스크: 흰색픽셀(R>128) = 1, 검정 = 0
+function maskToTensor(canvas) {
+  const { data } = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height);
+  const n = canvas.width * canvas.height;
+  const f32 = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    f32[i] = data[i*4] > 128 ? 1.0 : 0.0; // R채널 기반 (이진화)
+  }
+  return new ort.Tensor('float32', f32, [1, 1, canvas.height, canvas.width]);
+}
+
+// Output Tensor → Canvas
+function tensorToCanvas(tensor, size) {
+  const data = tensor.data;
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d');
+  const img = ctx.createImageData(size, size);
+  const n = size * size;
+  for (let i = 0; i < n; i++) {
+    img.data[i*4]   = Math.max(0, Math.min(255, Math.round(data[i]       * 255)));
+    img.data[i*4+1] = Math.max(0, Math.min(255, Math.round(data[i + n]   * 255)));
+    img.data[i*4+2] = Math.max(0, Math.min(255, Math.round(data[i + n*2] * 255)));
+    img.data[i*4+3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  return c;
+}
+
 function rgbToHex(r,g,b){return '#'+[r,g,b].map(v=>v.toString(16).padStart(2,'0')).join('');}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // 스포이드
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-function onErFillChange(){
-  const v=document.getElementById('erFill').value;
-  document.getElementById('eyeRow').classList.toggle('show',v==='eyedrop');
-}
+function onErFillChange(){}
 function toggleEyedrop(){
   eyedropMode=!eyedropMode;
   eyBtn.classList.toggle('act',eyedropMode);eyBtn.textContent=eyedropMode?'💧 찍는 중...':'💧 스포이드 찍기';
