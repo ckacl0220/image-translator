@@ -4,7 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>이미지 번역기</title>
-<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js"></script>
+<script>
+// ONNX Runtime Web - 비동기 로드 (실패해도 앱 동작)
+(function(){
+  const s = document.createElement('script');
+  s.src = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort.min.js';
+  s.onerror = () => console.warn('ONNX Runtime 로드 실패 - AI 지우개 비활성화');
+  document.head.appendChild(s);
+})();
+</script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100;200;300;400;500;600;700;800;900&family=Black+Han+Sans&family=Gowun+Dodum&family=Jua&family=Do+Hyeon&family=Gamja+Flower&display=swap');
 :root{--bg:#0e0e10;--s1:#17171a;--s2:#202025;--border:#32323e;--acc:#6c63ff;--acc2:#ff6584;--text:#ececf4;--muted:#7a7a90;--green:#4ade80;--yellow:#fbbf24;--orange:#f97316;}
@@ -1155,8 +1163,7 @@ function applyGlobal(){
 let lamaSession = null;
 let lamaLoading = false;
 let lamaReady = false;
-let eraseMode = false;
-let erasing = false;
+// eraseMode, erasing → 445번줄에 이미 선언됨 (중복 제거)
 let maskCtx = null;
 let brushMode = 'erase';
 let eraseCanvas = null;
