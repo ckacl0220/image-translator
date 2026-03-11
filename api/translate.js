@@ -10,26 +10,29 @@ export default async function handler(req, res) {
     }
 
     const { imageBase64, imageWidth, imageHeight } = req.body;
-
     if (!imageBase64) {
       return res.status(400).json({ error: '이미지가 필요합니다.' });
     }
 
-    const prompt = `이 이미지에서 중국어 텍스트를 모두 찾아 한국어로 번역해주세요.
+    const prompt = `Find all Chinese text in this image and translate each to Korean.
 
-이미지 실제 크기: 가로 ${imageWidth}px, 세로 ${imageHeight}px
+Image size: width=${imageWidth}px, height=${imageHeight}px
 
-좌표 규칙 (매우 중요):
-- x, y, w, h 는 반드시 위의 이미지 실제 픽셀 크기 기준으로 측정
-- w(너비), h(높이)는 텍스트가 차지하는 실제 영역보다 20% 여유있게 크게 잡을 것
-- fontSize는 원본 텍스트의 실제 픽셀 크기를 추정 (이미지 크기 대비 비율로 계산)
-- 텍스트가 이미지 전체 너비에 걸쳐 있으면 w를 이미지 너비에 맞게 크게 설정
-- color는 원본 텍스트 색상 HEX (#000000 형식)
-- bold: 원본 굵기 기준
-- align: 텍스트 정렬
+OUTPUT FORMAT: Return ONLY a JSON array. No explanation, no markdown, no code fences, no extra text.
 
-JSON 배열만 반환. 다른 텍스트 없이.
-[{"x":정수,"y":정수,"w":정수,"h":정수,"original":"원본중국어","translated":"자연스러운한국어","fontSize":정수,"color":"#XXXXXX","bold":false,"align":"center"}]`;
+Rules:
+- x, y, w, h, fontSize must be plain integers (no units, no quotes)
+- All string values must use double quotes
+- No trailing commas anywhere
+- color must be a hex string like "#333333"
+- align must be one of: "left", "center", "right"
+- bold must be true or false (no quotes)
+- translated: natural Korean (no Chinese characters allowed)
+
+Example of correct format:
+[{"x":50,"y":100,"w":400,"h":80,"original":"中文文字","translated":"한국어 번역","fontSize":60,"color":"#222222","bold":false,"align":"center"}]
+
+If there is no Chinese text in the image, return exactly: []`;
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -41,13 +44,20 @@ JSON 배열만 반환. 다른 텍스트 없이.
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 4096,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
-            { type: 'text', text: prompt }
-          ]
-        }]
+        messages: [
+          // prefill로 [ 를 먼저 넣어서 JSON 배열만 나오게 강제
+          {
+            role: 'user',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: imageBase64 } },
+              { type: 'text', text: prompt }
+            ]
+          },
+          {
+            role: 'assistant',
+            content: '[' // prefill: 반드시 배열로 시작하도록 강제
+          }
+        ]
       })
     });
 
@@ -57,8 +67,50 @@ JSON 배열만 반환. 다른 텍스트 없이.
     }
 
     const data = await response.json();
-    const text = data.content?.[0]?.text || '';
-    return res.status(200).json({ text });
+    let text = data.content?.[0]?.text || '';
+
+    // prefill로 '[' 를 붙였으므로 앞에 다시 붙이기
+    text = '[' + text;
+
+    // 마크다운 코드블록 제거
+    text = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+
+    // JSON 배열 추출 (가장 바깥 [ ] 범위)
+    const start = text.indexOf('[');
+    const end = text.lastIndexOf(']');
+    if (start === -1 || end === -1) {
+      return res.status(200).json({ text: '[]' });
+    }
+    let jsonStr = text.slice(start, end + 1);
+
+    // 흔한 JSON 오류 자동 수정
+    jsonStr = jsonStr
+      .replace(/,\s*([}\]])/g, '$1')           // trailing comma 제거
+      .replace(/([{,]\s*)([a-zA-Z_]\w*)\s*:/g, '$1"$2":') // unquoted key 수정
+      .replace(/:\s*'([^']*)'/g, ':"$1"')       // single quote → double quote
+      .replace(/[\u0000-\u001F\u007F]/g, ' ');  // 제어문자 제거
+
+    // 파싱 시도
+    try {
+      const arr = JSON.parse(jsonStr);
+      return res.status(200).json({ text: JSON.stringify(arr) });
+    } catch (e) {
+      // 파싱 실패 시 객체 단위로 살려내기
+      const objects = [];
+      const objRx = /\{[^{}]+\}/g;
+      let m;
+      while ((m = objRx.exec(jsonStr)) !== null) {
+        try {
+          const obj = JSON.parse(m[0]);
+          if (obj.translated) objects.push(obj);
+        } catch (e2) { /* skip broken object */ }
+      }
+      if (objects.length > 0) {
+        return res.status(200).json({ text: JSON.stringify(objects) });
+      }
+      console.error('JSON parse failed:', e.message, '\nRaw:', jsonStr.slice(0, 300));
+      return res.status(200).json({ text: '[]', warning: 'parse failed' });
+    }
 
   } catch (e) {
     return res.status(500).json({ error: e.message });
