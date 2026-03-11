@@ -389,21 +389,23 @@ input[type=file]{display:none;}
 // 폰트 목록
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 const FONTS=[
-  {l:'Noto Sans KR — Thin (100)',      v:"'Noto Sans KR',sans-serif", weight:100},
-  {l:'Noto Sans KR — ExtraLight (200)',v:"'Noto Sans KR',sans-serif", weight:200},
-  {l:'Noto Sans KR — Light (300)',     v:"'Noto Sans KR',sans-serif", weight:300},
-  {l:'Noto Sans KR — Regular (400)',   v:"'Noto Sans KR',sans-serif", weight:400},
-  {l:'Noto Sans KR — Medium (500)',    v:"'Noto Sans KR',sans-serif", weight:500},
-  {l:'Noto Sans KR — SemiBold (600)',  v:"'Noto Sans KR',sans-serif", weight:600},
-  {l:'Noto Sans KR — Bold (700)',      v:"'Noto Sans KR',sans-serif", weight:700},
-  {l:'Noto Sans KR — ExtraBold (800)', v:"'Noto Sans KR',sans-serif", weight:800},
-  {l:'Noto Sans KR — Black (900)',     v:"'Noto Sans KR',sans-serif", weight:900},
-  {l:'Black Han Sans (굵은 고딕)',      v:"'Black Han Sans',sans-serif", weight:400},
-  {l:'Gowun Dodum (부드러운)',          v:"'Gowun Dodum',sans-serif", weight:400},
-  {l:'Jua (귀여운)',                    v:"'Jua',sans-serif", weight:400},
-  {l:'Do Hyeon (둥근 고딕)',            v:"'Do Hyeon',sans-serif", weight:400},
-  {l:'Gamja Flower (손글씨)',           v:"'Gamja Flower',cursive", weight:400},
+  {l:'Noto Sans KR — Thin (100)',      v:"'Noto Sans KR',sans-serif", weight:100, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — ExtraLight (200)',v:"'Noto Sans KR',sans-serif", weight:200, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — Light (300)',     v:"'Noto Sans KR',sans-serif", weight:300, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — Regular (400)',   v:"'Noto Sans KR',sans-serif", weight:400, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — Medium (500)',    v:"'Noto Sans KR',sans-serif", weight:500, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — SemiBold (600)',  v:"'Noto Sans KR',sans-serif", weight:600, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — Bold (700)',      v:"'Noto Sans KR',sans-serif", weight:700, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — ExtraBold (800)', v:"'Noto Sans KR',sans-serif", weight:800, family:"'Noto Sans KR',sans-serif"},
+  {l:'Noto Sans KR — Black (900)',     v:"'Noto Sans KR',sans-serif", weight:900, family:"'Noto Sans KR',sans-serif"},
+  {l:'Black Han Sans (굵은 고딕)',      v:"'Black Han Sans',sans-serif", weight:400, family:"'Black Han Sans',sans-serif"},
+  {l:'Gowun Dodum (부드러운)',          v:"'Gowun Dodum',sans-serif", weight:400, family:"'Gowun Dodum',sans-serif"},
+  {l:'Jua (귀여운)',                    v:"'Jua',sans-serif", weight:400, family:"'Jua',sans-serif"},
+  {l:'Do Hyeon (둥근 고딕)',            v:"'Do Hyeon',sans-serif", weight:400, family:"'Do Hyeon',sans-serif"},
+  {l:'Gamja Flower (손글씨)',           v:"'Gamja Flower',cursive", weight:400, family:"'Gamja Flower',cursive"},
 ];
+// 폰트 라벨로 폰트 정보 검색 (l이 유일한 key)
+function getFontDef(r){ return FONTS.find(f=>f.l===r.fontLabel)||FONTS.find(f=>f.v===r.font&&f.weight===(r.fontWeight||400))||FONTS[3]; }
 const FL={}; FONTS.forEach(f=>FL[f.v]=f.l);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -498,9 +500,9 @@ function openFM(e,target){
     o.onmousedown=ev=>{
       ev.preventDefault(); ev.stopPropagation();
       const v=o.dataset.v, l=o.textContent;
-      if(fmTarget==='global'){gFont=v;gFontLbl.textContent=l;fontPrev.style.fontFamily=v;}
+      if(fmTarget==='global'){gFont=v;gFontLbl.textContent=l;fontPrev.style.fontFamily=v;fontPrev.style.fontWeight=FONTS.find(f=>f.l===l)?.weight||400;}
       else if(fmTarget==='msel'){msFont=v;msFontLbl.textContent=l;}
-      else{const r=regions.find(r=>r.id===fmTarget);if(r){snapshot();r.font=v;const fd=FONTS.find(f=>f.v===v);r.fontWeight=fd?.weight||400;const el=document.getElementById('rfl'+fmTarget);if(el)el.textContent=l;renderCanvas();}}
+      else{const r=regions.find(r=>r.id===fmTarget);if(r){snapshot();const fd=FONTS.find(f=>f.l===l);r.font=fd?.v||v;r.fontWeight=fd?.weight||400;r.fontLabel=l;const el=document.getElementById('rfl'+fmTarget);if(el)el.textContent=l;renderCanvas();}}
       closeFM();
     };
   });
@@ -588,9 +590,31 @@ async function callAPI(b64){
   return d.text||'';
 }
 function parseRegions(text){
-  const m=text.match(/\[[\s\S]*?\]/);
-  if(!m) throw new Error('번역 결과 파싱 실패');
-  const arr=JSON.parse(m[0]);
+  // 1) 백틱/마크다운 코드블록 제거
+  text=text.replace(/```[a-z]*\n?/gi,'').replace(/```/g,'');
+  // 2) JSON 배열 추출 (가장 바깥 [ ] 찾기)
+  const start=text.indexOf('['), end=text.lastIndexOf(']');
+  if(start===-1||end===-1) throw new Error('JSON 배열을 찾지 못했습니다');
+  let jsonStr=text.slice(start,end+1);
+  // 3) 흔한 JSON 오류 자동 수정
+  jsonStr=jsonStr
+    .replace(/,\s*([}\]])/g,'$1')          // trailing comma
+    .replace(/([{,]\s*)(\w+)\s*:/g,'$1"$2":')  // unquoted keys
+    .replace(/:\s*'([^']*)'/g,':"$1"')      // single-quote values
+    .replace(/[\u0000-\u001F\u007F]/g,' '); // 제어문자 제거
+  // 4) 파싱 시도
+  let arr;
+  try{
+    arr=JSON.parse(jsonStr);
+  }catch(e){
+    // 5) 줄 단위로 깨진 객체 제거 후 재시도
+    jsonStr=jsonStr.replace(/\{[^{}]*[^,\]}][^{}]*\}/g, match=>{
+      try{JSON.parse(match);return match;}catch(e){return '';}
+    }).replace(/,\s*,/g,',').replace(/\[\s*,/,'[').replace(/,\s*\]/,']');
+    try{arr=JSON.parse(jsonStr);}
+    catch(e2){throw new Error('번역 결과 파싱 실패: '+e2.message);}
+  }
+  if(!Array.isArray(arr)||!arr.length) throw new Error('번역된 텍스트가 없습니다');
   const gSize=parseInt(gSizeN.value)||80;
   const gColor=document.getElementById('gColor').value;
   const gAlign=document.getElementById('gAlign').value;
@@ -603,7 +627,7 @@ function parseRegions(text){
     color:r.color||gColor,
     bold:r.bold||gFx.bold, italic:gFx.italic, underline:gFx.underline, stroke:gFx.stroke,
     strokeColor:gStrokeColor.value, strokeW:parseInt(gStrokeW.value)||2,
-    align:r.align||gAlign, font:gFont, fontWeight:400
+    align:r.align||gAlign, font:gFont, fontWeight:400, fontLabel:FONTS[3].l
   }));
   // 겹침 방지: 겹치는 박스를 세로로 재배치
   resolveOverlaps(raw);
@@ -641,7 +665,7 @@ function addTextBox(){
     w, h, original:'', translated:'새 텍스트',
     fontSize:gSize, color:document.getElementById('gColor').value,
     bold:false,italic:false,underline:false,stroke:false,
-    strokeColor:'#ffffff', strokeW:2, align:'center', font:gFont
+    strokeColor:'#ffffff', strokeW:2, align:'center', font:gFont, fontWeight:FONTS.find(f=>f.v===gFont&&f.weight===400)?.weight||400, fontLabel:FONTS.find(f=>f.v===gFont&&f.weight===400)?.l||FONTS[3].l
   };
   regions.push(r);
   layers.push({id:r.id,name:`텍스트 #${r.id+1}`,visible:true,locked:false});
@@ -696,7 +720,8 @@ function renderCanvas(){
   mctx.drawImage(off,0,0,cvs.width,cvs.height);
   // 오버레이는 별도 유지
   renderOverlay();
-  eraseCanvas=null;
+  // 렌더 후 지우개 캔버스 재초기화 (eraseMode 중이면 다시 캡처)
+  if(eraseMode){ initEraseCanvas(); } else { eraseCanvas=null; }
 }
 
 // 원본이미지에서 주변색 샘플링 → 부드럽게 채우기
@@ -741,9 +766,9 @@ function inpaintFromOrig(ctx, r){
 
 function drawText(ctx,r){
   if(!r.translated) return;
-  const ff=r.font||FONTS[0].v;
-  const fontDef=FONTS.find(f=>f.v===ff);
-  const wt=r.bold?900:(r.fontWeight||(fontDef?.weight)||400);
+  const fd=getFontDef(r);
+  const ff=fd.family||fd.v;
+  const wt=r.bold?Math.min(900,(fd.weight||400)+300):(fd.weight||400);
   const fi=r.italic?'italic ':'';
   ctx.save();
   ctx.beginPath(); ctx.rect(r.x,r.y,r.w,r.h); ctx.clip();
@@ -1100,12 +1125,18 @@ function toggleErase(){
   erBtn.classList.toggle('act',eraseMode);erBtn.textContent=eraseMode?'🧹 ON':'🧹 지우개';
   erCard.classList.toggle('show',eraseMode);
   mainCanvas.classList.toggle('er-cur',eraseMode);
-  if(!eraseMode){erCursor.style.display='none';if(eyedropMode)toggleEyedrop();}
-  if(eraseMode)switchTab('settings');
+  if(!eraseMode){
+    erCursor.style.display='none';
+    if(eyedropMode)toggleEyedrop();
+    eraseCanvas=null; // 지우개 종료 시 캔버스 초기화
+  } else {
+    initEraseCanvas(); // 지우개 시작 시 현재 상태 캡처
+    switchTab('settings');
+  }
   renderOverlay();
 }
 function setupEraseEv(cvs){
-  cvs.addEventListener('mousedown',e=>{if(!eraseMode)return;erasing=true;initEraseCanvas();eraseAt(e);});
+  cvs.addEventListener('mousedown',e=>{if(!eraseMode)return;erasing=true;eraseAt(e);});
   cvs.addEventListener('mousemove',e=>{
     if(!eraseMode)return;
     const rect=cvs.getBoundingClientRect();
